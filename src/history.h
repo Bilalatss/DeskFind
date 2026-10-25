@@ -9,6 +9,7 @@ class History
 public:
     void Load();
     void Record(const std::wstring& path, bool folder);
+    void Clear();
     float Boost(std::wstring_view path) const { return Boost(path, {}); }
     float Boost(std::wstring_view dir, std::wstring_view name) const; // without joining them
 

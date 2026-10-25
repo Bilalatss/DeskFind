@@ -1,13 +1,14 @@
 #include "search.h"
 
+#include <shellapi.h>
 #include <shlobj.h>
 
 #include "lang.h"
 
 namespace
 {
-// Shown per tier; Everything is asked for more so the name ranking has something to choose from.
-constexpr size_t ShowDesktop = 50, ShowTree = 40, ShowRest = 80, ShowRecent = 8;
+// Everything is asked for more than a group shows, so the name ranking has something to choose from.
+constexpr size_t ShowRecent = 8;
 constexpr uint32_t GlobalFetch = 1000, TreeFetch = 500, DirectFetch = 300, IndexFetch = 400000;
 constexpr uint64_t FreshMs = 3000, DesktopListMs = 1500;
 constexpr size_t CacheEntries = 48, CacheBytes = 1536 * 1024;
@@ -26,8 +27,18 @@ constexpr uint32_t Always = 0;
 // Folders full of files nobody looks for from the desktop; Ctrl+E in Everything still shows them.
 constexpr std::wstring_view NoiseSegments[] = {
     L"node_modules", L".git", L".svn", L".hg", L"__pycache__", L".venv", L".vs",
-    L".godot", L".import", L".gradle", L".next", L".nuget", L".cache", L"$Recycle.Bin", L"System Volume Information",
+    L".godot", L".import", L".gradle", L".next", L".nuget", L".cache",
 };
+// Never shown, whatever the settings say: deleted files and the system's own.
+constexpr std::wstring_view HiddenSegments[] = {L"$Recycle.Bin", L"System Volume Information"};
+
+// Fixed disks only: a sleeping USB stick or a lost network share must not stall the UI thread.
+bool IsFixedDrive(std::wstring_view path)
+{
+    if (path.size() < 2 || path[1] != L':') return false;
+    wchar_t root[] = {path[0], L':', L'\\', 0};
+    return GetDriveTypeW(root) == DRIVE_FIXED;
+}
 
 // Generated or app-owned places: still shown, but after the user's own files with the same name match.
 constexpr std::wstring_view MinorSegments[] = {
@@ -129,9 +140,10 @@ size_t Search::CacheEntry::Bytes() const
 
 void Search::Init(HWND notify)
 {
-    desktops_.push_back(KnownFolder(FOLDERID_Desktop));
+    baseDesktops_.push_back(KnownFolder(FOLDERID_Desktop));
     std::wstring common = KnownFolder(FOLDERID_PublicDesktop);
-    if (!common.empty() && !EqualsNoCase(common, desktops_[0])) desktops_.push_back(common);
+    if (!common.empty() && !EqualsNoCase(common, baseDesktops_[0])) baseDesktops_.push_back(common);
+    RebuildDesktops();
 
     wchar_t buffer[MAX_PATH + 1];
     if (GetWindowsDirectoryW(buffer, MAX_PATH)) windowsDir_ = buffer;
@@ -159,6 +171,46 @@ void Search::Init(HWND notify)
 }
 
 void Search::Shutdown() { everything_.Stop(); }
+
+void Search::Configure(const SearchOptions& options)
+{
+    bool scope = options.extraFolders != options_.extraFolders || options.excludedFolders != options_.excludedFolders ||
+                 options.hideDevFolders != options_.hideDevFolders;
+    options_ = options;
+    // "D:\\" is kept as "D:", so every place that adds one backslash (queries, prefixes, listings) gets it right.
+    for (auto* list : {&options_.extraFolders, &options_.excludedFolders})
+        for (std::wstring& path : *list)
+            while (!path.empty() && path.back() == L'\\') path.pop_back();
+    RebuildDesktops(); // the labels follow the language too
+    if (scope)
+    {
+        index_ = TreeIndex{};
+        indexEpoch_++;
+        indexTooBig_ = false;
+    }
+    desktopTime_ = 0;
+    cache_.clear();
+    treeAnswer_.valid = false;
+}
+
+// The desktops, then the extra folders, each labelled the way locations show it. A folder that isn't there now (a USB
+// disk not plugged in yet) is kept: its queries just find nothing until it is.
+void Search::RebuildDesktops()
+{
+    desktops_ = baseDesktops_;
+    desktopLabels_.clear();
+    for (size_t i = 0; i < desktops_.size(); i++) desktopLabels_.push_back(i == 0 ? Lang::Get().desktop : Lang::Get().publicDesktop);
+    for (const std::wstring& folder : options_.extraFolders)
+    {
+        if (folder.size() < 3) continue; // a whole drive is not a desktop
+        if (std::any_of(desktops_.begin(), desktops_.end(), [&](const std::wstring& d) { return EqualsNoCase(d, folder); })) continue;
+        std::wstring label = folder.substr(folder.rfind(L'\\') + 1);
+        SHFILEINFOW info{};
+        if (IsFixedDrive(folder) && SHGetFileInfoW(folder.c_str(), 0, &info, sizeof(info), SHGFI_DISPLAYNAME) && info.szDisplayName[0]) label = info.szDisplayName;
+        desktops_.push_back(folder);
+        desktopLabels_.push_back(label);
+    }
+}
 
 void Search::ReleaseMemory()
 {
@@ -235,15 +287,20 @@ bool Search::IsOnDesktop(std::wstring_view dir) const { return IsDesktopRoot(dir
 
 bool Search::IsNoise(std::wstring_view dir) const
 {
-    for (std::wstring_view segment : NoiseSegments)
+    for (std::wstring_view segment : HiddenSegments)
         if (HasSegment(dir, segment)) return true;
+    if (options_.hideDevFolders)
+        for (std::wstring_view segment : NoiseSegments)
+            if (HasSegment(dir, segment)) return true;
+    for (const std::wstring& excluded : options_.excludedFolders)
+        if (HasPrefixDir(dir, excluded)) return true;
     return false;
 }
 
 // Windows itself, temp files, and Recent: shortcuts Windows makes to every opened file, copies of real ones.
 bool Search::IsSystem(std::wstring_view dir) const
 {
-    return HasPrefixDir(dir, windowsDir_) || HasPrefixDir(dir, tempDir_) || HasPrefixDir(dir, recentDir_);
+    return options_.hideSystemFolders && (HasPrefixDir(dir, windowsDir_) || HasPrefixDir(dir, tempDir_) || HasPrefixDir(dir, recentDir_));
 }
 
 std::wstring Search::TreeQuery(const std::wstring& text) const
@@ -255,10 +312,18 @@ std::wstring Search::TreeQuery(const std::wstring& text) const
         if (i) query += L" | ";
         query += Quote(desktops_[i] + L"\\");
     }
-    query += L"> " + text;
-    for (std::wstring_view segment : NoiseSegments)
-        query += L" !\"\\" + std::wstring(segment) + L"\\\"";
-    return query;
+    return query + L"> " + text + Exclusions();
+}
+
+std::wstring Search::Exclusions() const
+{
+    std::wstring terms;
+    for (std::wstring_view segment : HiddenSegments) terms += L" !\"\\" + std::wstring(segment) + L"\\\"";
+    if (options_.hideDevFolders)
+        for (std::wstring_view segment : NoiseSegments)
+            terms += L" !\"\\" + std::wstring(segment) + L"\\\"";
+    for (const std::wstring& excluded : options_.excludedFolders) terms += L" !" + Quote(excluded + L"\\");
+    return terms;
 }
 
 std::wstring Search::DirectQuery(const std::wstring& text) const
@@ -278,11 +343,18 @@ void Search::RefreshDesktop(bool force)
     desktopTime_ = NowMs();
     desktopItems_.clear();
 
-    // Show what Explorer shows on the desktop: hidden files only if Explorer is set to show them.
+    // By default what Explorer shows on the desktop: hidden files only if Explorer is set to show them.
     DWORD hidden = 2, superHidden = 0, size = sizeof(DWORD);
-    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"Hidden", RRF_RT_REG_DWORD, nullptr, &hidden, &size);
-    size = sizeof(DWORD);
-    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"ShowSuperHidden", RRF_RT_REG_DWORD, nullptr, &superHidden, &size);
+    if (options_.hiddenFiles == 0)
+    {
+        RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"Hidden", RRF_RT_REG_DWORD, nullptr, &hidden, &size);
+        size = sizeof(DWORD);
+        RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"ShowSuperHidden", RRF_RT_REG_DWORD, nullptr, &superHidden, &size);
+    }
+    else
+    {
+        hidden = superHidden = options_.hiddenFiles == 1 ? 1 : 0;
+    }
 
     struct Found
     {
@@ -290,8 +362,10 @@ void Search::RefreshDesktop(bool force)
         uint64_t written;
     };
     std::vector<Found> found;
-    for (const std::wstring& desktop : desktops_)
+    for (size_t d = 0; d < desktops_.size(); d++)
     {
+        const std::wstring& desktop = desktops_[d];
+        if (d >= baseDesktops_.size() && !IsFixedDrive(desktop)) continue;
         WIN32_FIND_DATAW data;
         HANDLE find = FindFirstFileExW((desktop + L"\\*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
         if (find == INVALID_HANDLE_VALUE) continue;
@@ -389,7 +463,7 @@ std::vector<Result> Search::RankResults(std::vector<Result> items, const Query& 
     {
         Score(result, query);
         result.place = Place(result);
-        result.boost = history_.Boost(result.path);
+        result.boost = options_.boostOpened ? history_.Boost(result.path) : 0;
     }
     // Best name match, then what was opened here before, then real files before generated ones,
     // then Everything's order (most recently modified first).
@@ -461,7 +535,7 @@ std::vector<Result> Search::LocalTree(const Query& query, uint32_t& total) const
     };
     std::vector<Hit> hits;
     thread_local std::wstring folded;
-    bool history = !history_.Empty();
+    bool history = options_.boostOpened && !history_.Empty();
     for (uint32_t i = 0; i < index_.entries.size(); i++)
     {
         const TreeIndex::Entry& e = index_.entries[i];
@@ -495,7 +569,7 @@ std::vector<Result> Search::LocalTree(const Query& query, uint32_t& total) const
         if (a.place != b.place) return a.place < b.place;
         return a.order < b.order;
     };
-    size_t show = std::min(hits.size(), ShowTree);
+    size_t show = std::min(hits.size(), Limit(Tier::DesktopFolders));
     std::partial_sort(hits.begin(), hits.begin() + show, hits.end(), better);
     std::vector<Result> results;
     results.reserve(show);
@@ -527,10 +601,7 @@ std::wstring Search::IndexQuery() const
         if (i) query += L" | ";
         query += Quote(desktops_[i] + L"\\");
     }
-    query += L">";
-    for (std::wstring_view segment : NoiseSegments)
-        query += L" !\"\\" + std::wstring(segment) + L"\\\"";
-    return query;
+    return query + L">" + Exclusions();
 }
 
 size_t Search::IndexBytes() const
@@ -541,14 +612,18 @@ size_t Search::IndexBytes() const
 
 void Search::PrepareIndex()
 {
-    if (index_.ready) return;
+    if (index_.ready || indexTooBig_) return;
     if (indexInFlight_)
     {
-        indexDiscard_ = false; // reopened before the answer came: it is wanted again
+        // Reopened before the answer came: it is wanted again, or, if the settings changed meanwhile, a fresh one is.
+        if (indexSentEpoch_ == indexEpoch_) indexDiscard_ = false;
+        else indexWanted_ = true;
         return;
     }
     if (!Everything::IsRunning()) return;
     indexInFlight_ = true;
+    indexDiscard_ = indexWanted_ = false;
+    indexSentEpoch_ = indexEpoch_;
     everything_.Query(Always, TagIndex, IndexQuery(), IndexFetch, EvSortDateModifiedDesc);
 }
 
@@ -638,34 +713,43 @@ std::vector<Result> Search::LocalDesktop(const Query& query, uint32_t& total) co
         matches.push_back(std::move(r));
     }
     total = uint32_t(matches.size());
-    return RankResults(std::move(matches), query, ShowDesktop);
+    return RankResults(std::move(matches), query, Limit(Tier::Desktop));
 }
 
 void Search::Compose(const CacheEntry& entry, const Query& query)
 {
-    view_.tiers.clear();
-    TierBlock desktop{Tier::Desktop};
+    TierBlock blocks[3] = {TierBlock{Tier::Desktop}, TierBlock{Tier::DesktopFolders}, TierBlock{Tier::Elsewhere}};
+    TierBlock& desktop = blocks[size_t(Tier::Desktop)];
     if (query.plain) desktop.items = LocalDesktop(query, desktop.total);
     else
     {
-        desktop.items = Rank(entry.desktop, Tier::Desktop, query, ShowDesktop);
+        desktop.items = Rank(entry.desktop, Tier::Desktop, query, Limit(Tier::Desktop));
         desktop.total = entry.desktopTotal;
     }
-    TierBlock tree{Tier::DesktopFolders};
+    TierBlock& tree = blocks[size_t(Tier::DesktopFolders)];
     if (UseIndex(query)) tree.items = LocalTree(query, tree.total);
     else
     {
-        tree.items = Rank(entry.tree, Tier::DesktopFolders, query, ShowTree);
+        tree.items = Rank(entry.tree, Tier::DesktopFolders, query, Limit(Tier::DesktopFolders));
         tree.total = entry.treeTotal;
     }
-    TierBlock rest{Tier::Elsewhere, entry.restTotal, Rank(entry.rest, Tier::Elsewhere, query, ShowRest)};
-    for (TierBlock* block : {&desktop, &tree, &rest})
-        if (!block->items.empty()) view_.tiers.push_back(std::move(*block));
+    TierBlock& rest = blocks[size_t(Tier::Elsewhere)];
+    rest.total = entry.restTotal;
+    rest.items = Rank(entry.rest, Tier::Elsewhere, query, Limit(Tier::Elsewhere));
+    Publish(blocks);
+}
+
+void Search::Publish(TierBlock (&blocks)[3])
+{
+    view_.tiers.clear();
+    for (uint8_t tier : options_.order)
+        if (tier < 3 && options_.show[tier] && !blocks[tier].items.empty()) view_.tiers.push_back(std::move(blocks[tier]));
 }
 
 void Search::ComposeRecent()
 {
     view_.tiers.clear();
+    if (!options_.recentWhenEmpty) return;
     TierBlock recent{Tier::Recent};
     // Only fixed disks are checked for files that are gone: a sleeping USB stick or a lost network drive
     // could stall the UI thread for seconds. Twice the list length is the most it looks at.
@@ -839,8 +923,8 @@ void Search::Run(const std::wstring& rawQuery, bool revalidate)
     }
     else
     {
-        ComposeLocal(query);
         // Typing on: the previous results that still match stay while Everything works, so the list does not flash.
+        TierBlock rest{Tier::Elsewhere};
         if (query.plain && previousPlain && !previousRest.items.empty())
         {
             std::vector<Result> kept;
@@ -850,12 +934,10 @@ void Search::Run(const std::wstring& rawQuery, bool revalidate)
                 FoldInto(r.Name(), folded);
                 if (ContainsAll(folded, query.terms)) kept.push_back(std::move(r));
             }
-            if (!kept.empty())
-            {
-                TierBlock rest{Tier::Elsewhere, uint32_t(kept.size()), RankResults(std::move(kept), query, ShowRest)};
-                view_.tiers.push_back(std::move(rest));
-            }
+            rest.total = uint32_t(kept.size());
+            rest.items = RankResults(std::move(kept), query, Limit(Tier::Elsewhere));
         }
+        ComposeLocal(query, std::move(rest));
     }
     view_.elapsedMs = PreciseMs() - startedAt_;
     if (fresh) return;
@@ -880,15 +962,14 @@ void Search::Run(const std::wstring& rawQuery, bool revalidate)
 }
 
 // What is known before Everything answers: the desktop, and its folders once the index is there.
-void Search::ComposeLocal(const Query& query)
+void Search::ComposeLocal(const Query& query, TierBlock rest)
 {
     view_.tiers.clear();
     if (!query.plain) return;
-    TierBlock desktop{Tier::Desktop}, tree{Tier::DesktopFolders};
-    desktop.items = LocalDesktop(query, desktop.total);
-    if (UseIndex(query)) tree.items = LocalTree(query, tree.total);
-    for (TierBlock* block : {&desktop, &tree})
-        if (!block->items.empty()) view_.tiers.push_back(std::move(*block));
+    TierBlock blocks[3] = {TierBlock{Tier::Desktop}, TierBlock{Tier::DesktopFolders}, std::move(rest)};
+    blocks[size_t(Tier::Desktop)].items = LocalDesktop(query, blocks[size_t(Tier::Desktop)].total);
+    if (UseIndex(query)) blocks[size_t(Tier::DesktopFolders)].items = LocalTree(query, blocks[size_t(Tier::DesktopFolders)].total);
+    Publish(blocks);
 }
 
 bool Search::OnReply(EvReply* raw)
@@ -899,10 +980,24 @@ bool Search::OnReply(EvReply* raw)
     if (reply->tag == TagIndex)
     {
         indexInFlight_ = false;
+        if (indexSentEpoch_ != indexEpoch_)
+        {
+            // Built for settings that have changed since: ask again if the box still wants it.
+            bool wanted = indexWanted_;
+            indexDiscard_ = indexWanted_ = false;
+            if (wanted) PrepareIndex();
+            return false;
+        }
         // Hidden and trimmed meanwhile: the answer is not wanted any more.
         if (!reply->ok || indexDiscard_)
         {
             indexDiscard_ = false;
+            return false;
+        }
+        if (reply->total > reply->items.size())
+        {
+            // A partial tree would hide the rest for good; the folders tier keeps asking Everything instead.
+            indexTooBig_ = true;
             return false;
         }
         BuildIndex(*reply);
@@ -1086,9 +1181,9 @@ void Search::BuildFromReplies()
             for (Result& r : ranked) kept.push_back(Candidate{std::move(r.path), r.nameAt, r.order, r.folder});
             list = std::move(kept);
         };
-        trim(entry.desktop, Tier::Desktop, ShowDesktop);
-        trim(entry.tree, Tier::DesktopFolders, ShowTree);
-        trim(entry.rest, Tier::Elsewhere, ShowRest);
+        trim(entry.desktop, Tier::Desktop, Limit(Tier::Desktop));
+        trim(entry.tree, Tier::DesktopFolders, Limit(Tier::DesktopFolders));
+        trim(entry.rest, Tier::Elsewhere, Limit(Tier::Elsewhere));
     }
 
     Compose(entry, query);
@@ -1106,7 +1201,7 @@ std::wstring Search::DescribeLocation(std::wstring_view dir) const
     for (size_t i = 0; i < desktops_.size(); i++)
     {
         const std::wstring& desktop = desktops_[i];
-        const wchar_t* label = i == 0 ? Lang::Get().desktop : Lang::Get().publicDesktop;
+        const std::wstring& label = desktopLabels_[i];
         if (EqualsNoCase(dir, desktop)) return label;
         if (HasPrefixDir(dir, desktop))
         {

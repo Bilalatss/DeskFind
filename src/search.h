@@ -39,6 +39,21 @@ struct TierBlock
     std::vector<Result> items;
 };
 
+// What the settings decide about searching; the three groups are indexed by their Tier value.
+struct SearchOptions
+{
+    uint8_t order[3] = {0, 1, 2}; // as shown
+    bool show[3] = {true, true, true};
+    uint32_t limit[3] = {50, 40, 80};
+    int hiddenFiles = 0; // 0 as File Explorer, 1 show, 2 hide
+    bool hideDevFolders = true;
+    bool hideSystemFolders = true;
+    bool boostOpened = true;
+    bool recentWhenEmpty = true;
+    std::vector<std::wstring> extraFolders;    // searched like the desktop
+    std::vector<std::wstring> excludedFolders; // never shown
+};
+
 struct SearchView
 {
     std::wstring query;
@@ -57,6 +72,7 @@ class Search
 public:
     void Init(HWND notify);
     void Shutdown();
+    void Configure(const SearchOptions& options); // drops what was cached under the old options
 
     // Recomputes the view; what Everything has to answer arrives later through OnReply.
     // `revalidate` re-asks Everything even when the cache is fresh (the box was just reopened).
@@ -68,6 +84,7 @@ public:
     void PrepareIndex();
     bool IndexReady() const { return index_.ready; }
     size_t IndexBytes() const;
+    size_t IndexEntries() const { return index_.ready ? index_.entries.size() : 0; }
 
     const SearchView& View() const { return view_; }
     History& Recent() { return history_; }
@@ -171,7 +188,11 @@ private:
     void Score(Result& result, const Query& query) const;
     uint8_t Place(const Result& result) const;
     void ComposeRecent();
-    void ComposeLocal(const Query& query);
+    void ComposeLocal(const Query& query, TierBlock rest = TierBlock{Tier::Elsewhere});
+    void Publish(TierBlock (&blocks)[3]); // into the view, in the chosen order, without hidden groups
+    size_t Limit(Tier tier) const { return options_.limit[size_t(tier)]; }
+    void RebuildDesktops();
+    std::wstring Exclusions() const; // Everything query terms that leave the hidden folders out
 
     CacheEntry* FindCached(const std::wstring& text);
     CacheEntry* FindRefinable(const Query& query);
@@ -194,7 +215,10 @@ private:
     uint32_t generation_ = 0;
     double startedAt_ = 0;
 
-    std::vector<std::wstring> desktops_; // user desktop first, then the public one
+    SearchOptions options_;
+    std::vector<std::wstring> baseDesktops_; // the user's desktop, then the public one
+    std::vector<std::wstring> desktops_;     // those and the extra folders, each with its label
+    std::vector<std::wstring> desktopLabels_;
     std::vector<Candidate> desktopItems_;
     uint64_t desktopTime_ = 0;
     std::wstring windowsDir_, tempDir_, recentDir_, appDataDir_, programDataDir_;
@@ -204,5 +228,8 @@ private:
     uint64_t useCounter_ = 0;
     TreeIndex index_;
     bool indexInFlight_ = false, indexDiscard_ = false;
+    bool indexTooBig_ = false;                  // the tree has more than IndexFetch entries: ask Everything each time instead
+    uint32_t indexEpoch_ = 0, indexSentEpoch_ = 0; // bumped when the settings change what the index holds
+    bool indexWanted_ = false;                  // asked for again while an outdated index query was in flight
     mutable TreeAnswer treeAnswer_; // the last query the index answered, reused while Everything's part arrives
 };

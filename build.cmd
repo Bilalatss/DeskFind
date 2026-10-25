@@ -31,7 +31,7 @@ rem Pixel, text and matching loops are built for speed, everything else for size
 set FLAGS=/nologo /c /std:c++20 /GL /Gy /Gw /EHsc /utf-8 /W4 /permissive- /MT /DUNICODE /D_UNICODE %DEFINES% /Foobj\%OUT%\
 cl %FLAGS% /O2 src\canvas.cpp src\text.cpp src\strings.cpp || exit /b 1
 cl %FLAGS% /O1 src\app.cpp src\search.cpp src\everything.cpp src\history.cpp src\icons.cpp src\lang.cpp src\main.cpp src\selftest.cpp ^
-   src\setup.cpp src\shell.cpp src\theme.cpp src\tray.cpp || exit /b 1
+   src\settings.cpp src\settingsui.cpp src\setup.cpp src\shell.cpp src\theme.cpp src\tray.cpp || exit /b 1
 
 rem Static vcruntime, system UCRT (part of Windows 10+): no redistributable needed and a small exe.
 link /nologo /OUT:obj\%OUT%.exe obj\%OUT%\*.obj obj\app.res /SUBSYSTEM:WINDOWS /LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO /MANIFEST:NO ^

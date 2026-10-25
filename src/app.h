@@ -7,14 +7,32 @@
 #include "canvas.h"
 #include "icons.h"
 #include "search.h"
+#include "settings.h"
+#include "settingsui.h"
 #include "text.h"
 #include "theme.h"
 #include "tray.h"
 
-class App
+class App : public SettingsHost
 {
 public:
-    int Run(bool show); // show: open the search box once started
+    int Run(int start); // 0 in the background, 1 with the search box open, 2 with the settings open
+
+    // SettingsHost
+    const Settings& CurrentSettings() const override { return settings_; }
+    void ApplySettings(const Settings& next) override;
+    const Stats& CurrentStats() const override { return stats_; }
+    void ResetStats() override;
+    const History& OpenedHistory() override { return search_.Recent(); }
+    void ClearHistory() override;
+    std::wstring DescribeLocation(std::wstring_view dir) const override { return search_.DescribeLocation(dir); }
+    size_t IndexEntries() const override { return search_.IndexEntries(); }
+    size_t IndexBytes() const override { return search_.IndexReady() ? search_.IndexBytes() : 0; }
+    bool GlobalKeyFailed() const override { return globalFailed_; }
+    bool HotkeyFree(const Hotkey& key) override;
+    void SuspendHotkeys(bool suspend) override;
+    TextEngine& Text() override { return text_; }
+    void SettingsClosed() override;
 
 private:
     struct Row
@@ -77,11 +95,18 @@ private:
     void ReleaseMemory();
     static void SetIdle(bool idle);
     void Exit();
+    void OpenSettings();
+    void UpdateHotkeys();
+    void UpdateTray();
+    void CountAnswer();
 
     // Layout, all in pixels at the current DPI.
     int D(float dip) const;
     int Line() const { return std::max(1, D(1)); }
+    float WidthDip() const;
+    HMONITOR TargetMonitor() const;
     void SetDpi(UINT dpi);
+    void ResetText(); // every rendered text is stale: size, language or theme changed
     void LoadTheme();
     void Relayout();
     int ListHeight() const;
@@ -94,6 +119,7 @@ private:
     RECT FooterRect() const;
     int BoxLeft() const;
     int BoxRight() const;
+    RECT GearRect() const;
     int RowsRight() const;
     bool HasScrollbar() const;
     RECT ThumbRect() const;
@@ -168,6 +194,14 @@ private:
     bool visible_ = false;
     bool exiting_ = false;
     HWND previous_ = nullptr; // foreground window before the search box opened
+    Settings settings_;
+    Stats stats_;
+    SettingsWindow settingsWindow_;
+    bool globalRegistered_ = false, globalFailed_ = false, hotkeysSuspended_ = false;
+    bool typed_ = false; // something was typed since the box opened: a search to count
+    uint32_t countedGeneration_ = 0;
+    bool gearHover_ = false;
+    TextBlock gearGlyph_;
 
     UINT dpi_ = 96;
     float scale_ = 1;

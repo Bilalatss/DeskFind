@@ -8,6 +8,7 @@
 #include <windowsx.h>
 
 #include <cmath>
+#include <ctime>
 
 #include "lang.h"
 #include "shell.h"
@@ -15,7 +16,7 @@
 
 namespace
 {
-constexpr int HotkeyId = 0x4446;
+constexpr int HotkeyId = 0x4446, GlobalHotkeyId = 0x4447, TestHotkeyId = 0x4448;
 
 enum : UINT_PTR
 {
@@ -28,11 +29,11 @@ enum : UINT_PTR
 };
 
 // Sizes in device-independent pixels.
-constexpr float Width = 680, SearchHeight = 60, ListMax = 456, ListPad = 6, FooterHeight = 36;
+constexpr float SearchHeight = 60, ListMax = 456, ListPad = 6, FooterHeight = 36;
 constexpr float RowPitch = 50, RowRadius = 6, HeaderTop = 10, HeaderBottom = 4;
 constexpr float IconSize = 24, IconLeft = 14, TextLeft = 50, RowRight = 12, TextGap = 10;
 constexpr float Track = 10, ThumbWidth = 4, ThumbMargin = 6, ThumbMin = 24;
-constexpr float GlyphLeft = 20, GlyphGap = 14, BoxRightPad = 18;
+constexpr float GlyphLeft = 20, GlyphGap = 14;
 constexpr float BoxFont = 18, NameFont = 14, SmallFont = 12, KeyFont = 11.5f;
 constexpr double FadeMs = 120, SlideMs = 180, SlideDistance = 6;
 constexpr UINT InterimMs = 150, TrimDelayMs = 4000, DeferMs = 250; // a second letter usually comes within 250 ms
@@ -97,17 +98,17 @@ std::vector<Span> Highlights(const std::wstring& display, const std::vector<std:
 }
 } // namespace
 
-int RunApp(bool show)
+int RunApp(int start)
 {
     // Never destroyed: a worker still inside a slow shell or Everything call at exit must not touch freed memory.
     // The process ends right after, and Windows takes the memory back.
     static App* app = new App;
-    return app->Run(show);
+    return app->Run(start);
 }
 
 // ---------------------------------------------------------------- lifetime
 
-int App::Run(bool show)
+int App::Run(int start)
 {
     g_app = this;
     instance_ = GetModuleHandleW(nullptr);
@@ -115,28 +116,34 @@ int App::Run(bool show)
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\DeskFind.Instance");
     if (GetLastError() == ERROR_ALREADY_EXISTS)
     {
-        // Launching the exe again just opens the search box of the running copy.
-        if (HWND other = show ? FindWindowW(MainWindowClass, nullptr) : nullptr)
+        // Launching the exe again just opens the search box (or the settings) of the running copy.
+        if (HWND other = start ? FindWindowW(MainWindowClass, nullptr) : nullptr)
         {
             DWORD pid = 0;
             GetWindowThreadProcessId(other, &pid);
             AllowSetForegroundWindow(pid);
-            PostMessageW(other, WM_APP_SHOW, 0, 0);
+            PostMessageW(other, start == 2 ? WM_APP_SETTINGS : WM_APP_SHOW, 0, 0);
         }
         if (mutex) CloseHandle(mutex);
         return 0;
     }
 
+    settings_ = Settings::Load();
+    stats_ = Stats::Load();
+    if (!stats_.since) stats_.since = int64_t(std::time(nullptr));
+    Lang::Set(settings_.language);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     if (!text_.Init() || !CreateMainWindow()) return 1;
     LoadTheme();
     search_.Init(hwnd_);
+    search_.Configure(settings_.Search());
     icons_.Start(hwnd_);
-    tray_.Create(hwnd_, &text_);
+    UpdateTray();
+    Tray::SetMenuTheme(settings_.theme); // after the tray icon, whose creation allows dark menus again
     taskbarCreated_ = RegisterWindowMessageW(L"TaskbarCreated");
     ChangeWindowMessageFilterEx(hwnd_, taskbarCreated_, MSGFLT_ALLOW, nullptr);
     hook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, OnWinEvent, 0, 0, WINEVENT_OUTOFCONTEXT);
-    ForegroundChanged(GetForegroundWindow());
+    UpdateHotkeys();
     if (Autostart::Initialize()) tray_.Notify(Lang::Get().welcomeTitle, Lang::Get().welcomeText);
     if (!Everything::IsRunning())
     {
@@ -144,7 +151,8 @@ int App::Run(bool show)
         Everything::Launch(L"-startup");
     }
     SetTimer(hwnd_, TimerTrim, TrimDelayMs, nullptr);
-    if (show) ShowSearch();
+    if (start == 1) ShowSearch();
+    if (start == 2) OpenSettings();
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0)
@@ -185,7 +193,7 @@ void App::ApplyDwm()
     DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
     DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
     DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
-    DWM_SYSTEMBACKDROP_TYPE backdrop = DWMSBT_TRANSIENTWINDOW;
+    DWM_SYSTEMBACKDROP_TYPE backdrop = settings_.transparency ? DWMSBT_TRANSIENTWINDOW : DWMSBT_NONE;
     DwmSetWindowAttribute(hwnd_, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
     MARGINS margins{-1, -1, -1, -1};
     DwmExtendFrameIntoClientArea(hwnd_, &margins);
@@ -194,10 +202,13 @@ void App::ApplyDwm()
 void App::Exit()
 {
     exiting_ = true;
+    settingsWindow_.Close();
     HideSearch();
+    stats_.Save();
     tray_.Destroy();
     if (hook_) UnhookWinEvent(hook_);
     if (hotkeyRegistered_) UnregisterHotKey(hwnd_, HotkeyId);
+    UnregisterHotKey(hwnd_, GlobalHotkeyId);
     search_.Shutdown();
     icons_.Stop();
     DestroyWindow(hwnd_);
@@ -221,11 +232,11 @@ void App::ShowSearch()
     LoadTheme();
     HWND foreground = GetForegroundWindow();
     previous_ = foreground != hwnd_ ? foreground : nullptr;
+    stats_.opens++;
+    typed_ = false;
 
-    POINT cursor;
-    GetCursorPos(&cursor);
     UINT dpiX = 96, dpiY = 96;
-    if (FAILED(GetDpiForMonitor(MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST), MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) dpiX = 96;
+    if (FAILED(GetDpiForMonitor(TargetMonitor(), MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) dpiX = 96;
     SetDpi(dpiX);
 
     // Whatever was typed last stays, selected, so typing replaces it; its results show at once from the cache.
@@ -254,8 +265,8 @@ void App::ShowSearch()
 
     visible_ = true;
     animStart_ = PreciseMs();
-    animating_ = true;
-    SetTimer(hwnd_, TimerAnim, USER_TIMER_MINIMUM, nullptr);
+    animating_ = settings_.animations;
+    if (animating_) SetTimer(hwnd_, TimerAnim, USER_TIMER_MINIMUM, nullptr);
     ShowWindow(hwnd_, SW_SHOW);
     SetForegroundWindow(hwnd_);
     UpdateWindow(hwnd_);
@@ -278,6 +289,9 @@ void App::HideSearch()
     if (!visible_) return;
     visible_ = false;
     ShowWindow(hwnd_, SW_HIDE);
+    if (typed_ && !search_.View().query.empty()) stats_.CountSearch();
+    typed_ = false;
+    stats_.Save();
     KillTimer(hwnd_, TimerCaret);
     KillTimer(hwnd_, TimerAnim);
     KillTimer(hwnd_, TimerInterim);
@@ -291,7 +305,124 @@ void App::HideSearch()
     icons_.Cancel();
     for (auto it = iconCache_.begin(); it != iconCache_.end();)
         it = it->second.loaded ? std::next(it) : iconCache_.erase(it);
+    gearHover_ = false;
     SetTimer(hwnd_, TimerTrim, TrimDelayMs, nullptr);
+}
+
+void App::OpenSettings()
+{
+    HideSearch();
+    KillTimer(hwnd_, TimerTrim);
+    SetIdle(false);
+    settingsWindow_.Open(this);
+}
+
+void App::SettingsClosed()
+{
+    if (!visible_) SetTimer(hwnd_, TimerTrim, TrimDelayMs, nullptr);
+}
+
+// Everything takes effect at once: what is shown is rebuilt in the new language, theme and size.
+void App::ApplySettings(const Settings& next)
+{
+    Settings old = settings_;
+    settings_ = next;
+    settings_.Save();
+    bool language = old.language != next.language;
+    if (language) Lang::Set(next.language);
+    search_.Configure(settings_.Search());
+    LoadTheme();
+    UpdateTray();
+    Tray::SetMenuTheme(settings_.theme);
+    UpdateHotkeys();
+    ResetText();
+    shownQuery_.clear();
+    if (visible_)
+    {
+        search_.Run(editor_.text, true);
+        search_.PrepareIndex();
+        ApplyView();
+        ApplyDwm();
+        Relayout();
+        PlaceOnCursorMonitor();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+    if (language || old.theme != next.theme || old.transparency != next.transparency) settingsWindow_.Refresh();
+}
+
+// The tray icon, if wanted, with a tip that names the shortcut actually set.
+void App::UpdateTray()
+{
+    if (!settings_.trayIcon)
+    {
+        tray_.Destroy();
+        return;
+    }
+    std::wstring tip = L"DeskFind";
+    if (settings_.desktopKeyOn && settings_.desktopKey.vk)
+    {
+        wchar_t text[128];
+        swprintf_s(text, Lang::Get().trayTip, settings_.desktopKey.Text().c_str());
+        tip = text;
+    }
+    else if (settings_.globalKeyOn && settings_.globalKey.vk)
+    {
+        tip += L" · " + settings_.globalKey.Text();
+    }
+    tray_.SetTip(tip);
+    tray_.Create(hwnd_);
+}
+
+void App::ResetStats()
+{
+    stats_.Reset();
+    stats_.Save();
+}
+
+void App::ClearHistory()
+{
+    search_.Recent().Clear();
+    if (visible_) QueryChanged();
+}
+
+bool App::HotkeyFree(const Hotkey& key)
+{
+    if (!RegisterHotKey(hwnd_, TestHotkeyId, key.mods | MOD_NOREPEAT, key.vk)) return false;
+    UnregisterHotKey(hwnd_, TestHotkeyId);
+    return true;
+}
+
+void App::SuspendHotkeys(bool suspend)
+{
+    hotkeysSuspended_ = suspend;
+    UpdateHotkeys();
+}
+
+// The "everywhere" shortcut is registered all the time; the desktop one only while the desktop is in front.
+void App::UpdateHotkeys()
+{
+    UnregisterHotKey(hwnd_, GlobalHotkeyId);
+    globalRegistered_ = globalFailed_ = false;
+    if (settings_.globalKeyOn && settings_.globalKey.vk && !hotkeysSuspended_)
+    {
+        globalRegistered_ = RegisterHotKey(hwnd_, GlobalHotkeyId, settings_.globalKey.mods | MOD_NOREPEAT, settings_.globalKey.vk) != FALSE;
+        globalFailed_ = !globalRegistered_;
+    }
+    if (hotkeyRegistered_)
+    {
+        UnregisterHotKey(hwnd_, HotkeyId);
+        hotkeyRegistered_ = false;
+    }
+    ForegroundChanged(GetForegroundWindow());
+}
+
+void App::CountAnswer()
+{
+    const SearchView& view = search_.View();
+    if (view.pending || view.query.empty() || view.generation == countedGeneration_) return;
+    countedGeneration_ = view.generation;
+    stats_.answers++;
+    stats_.answerMs += view.elapsedMs;
 }
 
 // While hidden, nothing but the tray icon and the hotkey needs memory.
@@ -338,12 +469,31 @@ void App::SetIdle(bool idle)
 
 int App::D(float dip) const { return int(std::lround(dip * scale_)); }
 
+float App::WidthDip() const
+{
+    static constexpr float widths[] = {560, 680, 820};
+    return widths[std::clamp(settings_.width, 0, 2)];
+}
+
+HMONITOR App::TargetMonitor() const
+{
+    if (settings_.monitor == 1) return MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    POINT cursor;
+    GetCursorPos(&cursor);
+    return MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+}
+
 void App::SetDpi(UINT dpi)
 {
     if (dpi == 0) dpi = 96;
     if (dpi == dpi_) return;
     dpi_ = dpi;
     scale_ = float(dpi) / 96.0f;
+    ResetText();
+}
+
+void App::ResetText()
+{
     text_.ReleaseFormats();
     for (Row& row : rows_) row.rendered = false;
     if (boxLayout_)
@@ -351,13 +501,13 @@ void App::SetDpi(UINT dpi)
         boxLayout_->Release();
         boxLayout_ = nullptr;
     }
-    boxText_ = placeholder_ = glyph_ = statusText_ = TextBlock{};
+    boxText_ = placeholder_ = glyph_ = statusText_ = gearGlyph_ = TextBlock{};
     statusRendered_ = false;
     hints_.clear();
     lineBox_ = line14_ = line12_ = 0;
 }
 
-void App::LoadTheme() { theme_.Load(text_.Gamma(), text_.GrayscaleContrast()); }
+void App::LoadTheme() { theme_.Load(text_.Gamma(), text_.GrayscaleContrast(), settings_.theme, settings_.transparency); }
 
 void App::Relayout()
 {
@@ -391,7 +541,7 @@ void App::ApplyWindowSize()
 {
     RECT r;
     GetWindowRect(hwnd_, &r);
-    int width = D(Width), height = WindowHeight();
+    int width = D(WidthDip()), height = WindowHeight();
     if (r.right - r.left == width && r.bottom - r.top == height) return;
     SetWindowPos(hwnd_, nullptr, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -400,40 +550,45 @@ void App::ApplyWindowSize()
 // Centered, a fifth of the way down the monitor the mouse is on (the desktop the user just clicked).
 void App::PlaceOnCursorMonitor()
 {
-    POINT cursor;
-    GetCursorPos(&cursor);
     MONITORINFO info{sizeof(info)};
-    GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST), &info);
+    GetMonitorInfoW(TargetMonitor(), &info);
     const RECT& work = info.rcWork;
-    int width = D(Width), height = WindowHeight();
+    int width = D(WidthDip()), height = WindowHeight();
     int x = work.left + (work.right - work.left - width) / 2;
     int y = work.top + (work.bottom - work.top) / 5;
     SetWindowPos(hwnd_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_NOCOPYBITS);
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-RECT App::SearchRect() const { return RECT{0, 0, D(Width), D(SearchHeight)}; }
+RECT App::SearchRect() const { return RECT{0, 0, D(WidthDip()), D(SearchHeight)}; }
 
 RECT App::ListRect() const
 {
     int top = D(SearchHeight) + Line();
-    return RECT{0, top, D(Width), top + ListHeight()};
+    return RECT{0, top, D(WidthDip()), top + ListHeight()};
 }
 
 RECT App::ViewportRect() const
 {
     RECT list = ListRect();
-    return RECT{D(ListPad), list.top + D(ListPad), D(Width) - D(ListPad), list.bottom - D(ListPad)};
+    return RECT{D(ListPad), list.top + D(ListPad), D(WidthDip()) - D(ListPad), list.bottom - D(ListPad)};
 }
 
 RECT App::FooterRect() const
 {
     int height = WindowHeight();
-    return RECT{0, height - D(FooterHeight) - Line(), D(Width), height};
+    return RECT{0, height - D(FooterHeight) - Line(), D(WidthDip()), height};
 }
 
 int App::BoxLeft() const { return D(GlyphLeft) + int(std::ceil(glyph_.width)) + D(GlyphGap); }
-int App::BoxRight() const { return D(Width) - D(BoxRightPad); }
+int App::BoxRight() const { return GearRect().left - D(6); }
+
+// The settings button at the right end of the search row.
+RECT App::GearRect() const
+{
+    int size = D(32), right = D(WidthDip()) - D(14), top = (D(SearchHeight) - size) / 2;
+    return RECT{right - size, top, right, top + size};
+}
 
 bool App::HasScrollbar() const
 {
@@ -441,7 +596,7 @@ bool App::HasScrollbar() const
     return !rows_.empty() && contentHeight_ > vp.bottom - vp.top;
 }
 
-int App::RowsRight() const { return D(Width) - D(ListPad) - (HasScrollbar() ? D(Track) : 0); }
+int App::RowsRight() const { return D(WidthDip()) - D(ListPad) - (HasScrollbar() ? D(Track) : 0); }
 
 int App::MaxScroll() const
 {
@@ -459,7 +614,7 @@ RECT App::ThumbRect() const
     thumb = std::min(thumb, track);
     int max = MaxScroll();
     int top = trackTop + (max > 0 ? int(int64_t(track - thumb) * scroll_ / max) : 0);
-    int right = D(Width) - D(ListPad) - (D(Track) - D(ThumbWidth)) / 2;
+    int right = D(WidthDip()) - D(ListPad) - (D(Track) - D(ThumbWidth)) / 2;
     return RECT{right - D(ThumbWidth), top, right, top + thumb};
 }
 
@@ -471,10 +626,12 @@ void App::QueryChanged()
     double started = PreciseMs();
 #endif
     search_.Run(editor_.text, false);
+    typed_ = true;
     if (search_.View().deferred) SetTimer(hwnd_, TimerDefer, DeferMs, nullptr);
     else KillTimer(hwnd_, TimerDefer);
     // What is known locally shows at once; Everything's part follows, the previous one bridging the wait.
     ApplyView();
+    CountAnswer();
     TRACE(L"typed '%ls': local answer in %.2f ms, %zu rows%ls", editor_.text.c_str(), PreciseMs() - started, rows_.size(),
           search_.View().pending ? L", Everything pending" : L"");
 }
@@ -705,6 +862,11 @@ void App::DrawSearchRow()
         canvas_.FillRect(x, top, x + Line(), top + lineHeight, palette.ink[int(Ink::Primary)]);
     }
     canvas_.SetClip(outer);
+
+    RECT gear = GearRect();
+    if (gearHover_) canvas_.FillRoundRect(float(gear.left), float(gear.top), float(gear.right), float(gear.bottom), 5 * scale_, theme_.selected);
+    if (gearGlyph_.masks.empty()) gearGlyph_ = text_.Render(L"\xE713", {Font::Icons, 16 * scale_, false, Ink::Tertiary});
+    canvas_.DrawText(gearGlyph_, (gear.left + gear.right - int(gearGlyph_.width)) / 2, (gear.top + gear.bottom - int(gearGlyph_.height)) / 2, palette);
 }
 
 void App::RenderRow(Row& row, int width)
@@ -757,12 +919,12 @@ void App::DrawList()
     if (rows_.empty()) return;
     RECT outer = canvas_.Clip();
     RECT list = ListRect();
-    if (!Intersects(RECT{0, list.top - Line(), D(Width), list.bottom}, outer)) return;
+    if (!Intersects(RECT{0, list.top - Line(), D(WidthDip()), list.bottom}, outer)) return;
     paintIconUse_ = iconUse_ + 1; // icons drawn from here on are on screen and must not be evicted
-    canvas_.FillRect(0, list.top - Line(), D(Width), list.top, theme_.divider);
+    canvas_.FillRect(0, list.top - Line(), D(WidthDip()), list.top, theme_.divider);
 
     RECT vp = ViewportRect();
-    canvas_.SetClip(Intersect(outer, RECT{0, vp.top, D(Width), vp.bottom}));
+    canvas_.SetClip(Intersect(outer, RECT{0, vp.top, D(WidthDip()), vp.bottom}));
     const Palette& palette = theme_.palette;
     int x0 = D(ListPad), x1 = RowsRight(), width = x1 - x0;
     int view = vp.bottom - vp.top;
@@ -819,7 +981,8 @@ void App::DrawList()
 
 void App::RenderFooter()
 {
-    if (hints_.empty())
+    if (!settings_.keyHints) hintsWidth_ = 0;
+    if (hints_.empty() && settings_.keyHints)
     {
         const Lang& lang = Lang::Get();
         const wchar_t* pairs[][2] = {{L"↵", lang.hintOpen}, {L"Ctrl ↵", lang.hintReveal}, {L"Ctrl E", L"Everything"}, {L"Esc", lang.hintClose}};
@@ -835,7 +998,7 @@ void App::RenderFooter()
     }
     if (!statusRendered_)
     {
-        int available = D(Width) - D(16) - hintsWidth_ - D(12) - D(20);
+        int available = D(WidthDip()) - D(16) - hintsWidth_ - D(12) - D(20);
         statusText_ = text_.Render(status_, {Font::Ui, SmallFont * scale_, false, Ink::Tertiary}, float(std::max(10, available)));
         statusRendered_ = true;
     }
@@ -847,11 +1010,11 @@ void App::DrawFooter()
     if (!Intersects(footer, canvas_.Clip())) return;
     RenderFooter();
     const Palette& palette = theme_.palette;
-    canvas_.FillRect(0, footer.top, D(Width), footer.top + Line(), theme_.divider);
+    canvas_.FillRect(0, footer.top, D(WidthDip()), footer.top + Line(), theme_.divider);
     int top = footer.top + Line(), height = footer.bottom - top;
     canvas_.DrawText(statusText_, D(20), top + (height - int(std::lround(statusText_.height))) / 2, palette);
 
-    int x = D(Width) - D(16) - hintsWidth_;
+    int x = D(WidthDip()) - D(16) - hintsWidth_;
     for (size_t i = 0; i < hints_.size(); i++)
     {
         const Hint& hint = hints_[i];
@@ -1150,6 +1313,7 @@ void App::Open(const Result item)
     AllowSetForegroundWindow(ASFW_ANY);
     if (ShellOps::Open(item.path, std::wstring(item.Dir()), error))
     {
+        stats_.launches++;
         search_.Recent().Record(item.path, item.folder);
         HideSearch();
     }
@@ -1164,6 +1328,7 @@ void App::Reveal(const Result item)
 {
     AllowSetForegroundWindow(ASFW_ANY);
     search_.Recent().Record(item.path, item.folder);
+    stats_.launches++;
     if (search_.IsOnDesktop(item.Dir()) && ShellOps::SelectOnDesktop(item.path))
     {
         HideSearch();
@@ -1271,6 +1436,7 @@ bool App::OnKeyDown(WPARAM key)
     case 'Z': Undo(shift); return true;
     case 'Y': Undo(true); return true;
     case 'E': OpenInEverything(); return true;
+    case VK_OEM_COMMA: OpenSettings(); return true;
     case 'F': // Ctrl+F again: start a new search over the old text
         editor_.anchor = 0;
         editor_.caret = n;
@@ -1289,6 +1455,12 @@ void App::OnChar(wchar_t c)
 
 void App::OnMouseDown(int x, int y, bool doubleClick)
 {
+    RECT gear = GearRect();
+    if (x >= gear.left && x < gear.right && y >= gear.top && y < gear.bottom)
+    {
+        OpenSettings();
+        return;
+    }
     SetCapture(hwnd_);
     if (y < D(SearchHeight))
     {
@@ -1345,7 +1517,17 @@ void App::OnMouseMove(int x, int y)
         if (track > 0) ScrollTo(int(int64_t(y - dragOffset_ - trackTop) * MaxScroll() / track));
         return;
     }
-    default: SetHover(RowAt(x, y));
+    default:
+    {
+        RECT gear = GearRect();
+        bool overGear = x >= gear.left && x < gear.right && y >= gear.top && y < gear.bottom;
+        if (overGear != gearHover_)
+        {
+            gearHover_ = overGear;
+            InvalidateSearchRow();
+        }
+        SetHover(RowAt(x, y));
+    }
     }
 }
 
@@ -1391,11 +1573,14 @@ void CALLBACK App::OnWinEvent(HWINEVENTHOOK, DWORD, HWND hwnd, LONG, LONG, DWORD
 // Ctrl+F is registered only while the desktop is the foreground window, so every other app keeps its own Ctrl+F.
 void App::ForegroundChanged(HWND foreground)
 {
-    bool wanted = ShellOps::IsDesktopWindow(foreground);
+    const Hotkey& key = settings_.desktopKey;
+    // Not twice: when the everywhere shortcut is the same keys, it already covers the desktop.
+    bool wanted = settings_.desktopKeyOn && key.vk && !hotkeysSuspended_ && !(globalRegistered_ && settings_.globalKey == key) &&
+                  ShellOps::IsDesktopWindow(foreground);
     if (wanted == hotkeyRegistered_) return;
     if (wanted)
     {
-        hotkeyRegistered_ = RegisterHotKey(hwnd_, HotkeyId, MOD_CONTROL | MOD_NOREPEAT, 'F') != FALSE;
+        hotkeyRegistered_ = RegisterHotKey(hwnd_, HotkeyId, key.mods | MOD_NOREPEAT, key.vk) != FALSE;
     }
     else
     {
@@ -1416,7 +1601,7 @@ void App::OnHotkey()
     ForegroundChanged(foreground);
     INPUT input[2] = {};
     input[0].type = input[1].type = INPUT_KEYBOARD;
-    input[0].ki.wVk = input[1].ki.wVk = 'F';
+    input[0].ki.wVk = input[1].ki.wVk = WORD(settings_.desktopKey.vk);
     input[1].ki.dwFlags = KEYEVENTF_KEYUP;
     SendInput(2, input, sizeof(INPUT));
 }
@@ -1477,6 +1662,11 @@ LRESULT App::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_MOUSELEAVE:
         tracking_ = false;
         SetHover(-1);
+        if (gearHover_)
+        {
+            gearHover_ = false;
+            InvalidateSearchRow();
+        }
         return 0;
     case WM_CAPTURECHANGED: drag_ = Drag::None; return 0;
     case WM_MOUSEWHEEL: OnWheel(GET_WHEEL_DELTA_WPARAM(wParam)); return 0;
@@ -1497,7 +1687,7 @@ LRESULT App::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
             break;
         case TimerTrim:
             KillTimer(hwnd_, TimerTrim);
-            if (!visible_) ReleaseMemory();
+            if (!visible_ && !settingsWindow_.IsOpen()) ReleaseMemory();
             break;
         case TimerInterim:
             KillTimer(hwnd_, TimerInterim);
@@ -1541,7 +1731,7 @@ LRESULT App::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
         {
             LoadTheme();
             Tray::ThemeChanged();
-            tray_.Refresh();
+            if (settings_.trayIcon) tray_.Refresh();
             if (visible_)
             {
                 ApplyDwm();
@@ -1551,16 +1741,22 @@ LRESULT App::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
         break;
     case WM_DWMCOLORIZATIONCOLORCHANGED:
         LoadTheme();
-        tray_.Refresh();
+        if (settings_.trayIcon) tray_.Refresh();
         if (visible_) InvalidateRect(hwnd_, nullptr, FALSE);
         break;
     case WM_HOTKEY:
         if (wParam == HotkeyId) OnHotkey();
+        if (wParam == GlobalHotkeyId)
+        {
+            if (visible_) Dismiss();
+            else ShowSearch();
+        }
         return 0;
     case WM_APP_EVERYTHING:
         if (search_.OnReply(reinterpret_cast<EvReply*>(lParam)))
         {
             ApplyView();
+            CountAnswer();
             TRACE(L"Everything answered '%ls': %.2f ms since typing (ours %.2f), %zu rows", search_.View().query.c_str(),
                   search_.View().elapsedMs, search_.View().processMs, rows_.size());
         }
@@ -1598,10 +1794,15 @@ LRESULT App::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_CONTEXTMENU:
         {
             POINT at{GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam)};
-            switch (tray_.ShowMenu(at))
+            std::wstring keys = settings_.desktopKeyOn ? settings_.desktopKey.Text() : settings_.globalKeyOn ? settings_.globalKey.Text() : L"";
+            switch (tray_.ShowMenu(at, keys))
             {
             case TrayCmdSearch: ShowSearch(); break;
-            case TrayCmdAutostart: Autostart::Set(!Autostart::IsEnabled()); break;
+            case TrayCmdSettings: OpenSettings(); break;
+            case TrayCmdAutostart:
+                Autostart::Set(!Autostart::IsEnabled());
+                settingsWindow_.Refresh();
+                break;
             case TrayCmdAbout: ShellExecuteW(nullptr, L"open", L"" DESKFIND_URL, nullptr, nullptr, SW_SHOWNORMAL); break;
             case TrayCmdExit: Exit(); break;
             }
@@ -1611,13 +1812,14 @@ LRESULT App::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     case WM_APP_SHOW: ShowSearch(); return 0;
     case WM_APP_QUIT: Exit(); return 0;
+    case WM_APP_SETTINGS: OpenSettings(); return 0;
     case WM_IME_STARTCOMPOSITION: UpdateImePosition(); break;
     case WM_CLOSE: Dismiss(); return 0; // Alt+F4 only hides; the app lives in the tray
     case WM_DESTROY: PostQuitMessage(0); return 0;
     default:
         if (msg == taskbarCreated_ && msg != 0)
         {
-            tray_.Refresh();
+            if (settings_.trayIcon) tray_.Refresh();
             return 0;
         }
     }

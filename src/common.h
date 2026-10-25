@@ -28,6 +28,7 @@ enum : UINT
     WM_APP_TRAY,                    // tray icon callback
     WM_APP_SHOW,                    // another instance asked us to show the search box
     WM_APP_QUIT,                    // the installer is replacing or removing us
+    WM_APP_SETTINGS,                // another instance asked us to open the settings
 };
 
 // The main window, which other copies of DeskFind look for.

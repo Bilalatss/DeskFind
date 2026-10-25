@@ -1,6 +1,7 @@
-// DeskFind.exe --selftest out.txt query... : runs the search pipeline without UI and writes what it found and how long it took.
+// DeskFind.exe --selftest out.txt [@settings] [@boost] [@index] query...  (@settings: search as the saved settings say) : runs the search pipeline without UI and writes what it found and how long it took.
 // A query written as "a>b>c" is typed one prefix at a time, the way the search box sends it.
 #include "search.h"
+#include "settings.h"
 
 namespace
 {
@@ -83,6 +84,12 @@ int RunSelfTest(int argc, wchar_t** argv)
         if (spec == L"@index")
         {
             h.BuildIndex();
+            continue;
+        }
+        if (spec == L"@settings")
+        {
+            h.search.Configure(Settings::Load().Search());
+            h.log += L"settings loaded\r\n";
             continue;
         }
         if (spec == L"@boost")

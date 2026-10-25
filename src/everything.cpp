@@ -79,6 +79,22 @@ bool Everything::IsReady()
     return loaded != 0;
 }
 
+std::wstring Everything::Version()
+{
+    HWND window = Window();
+    if (!window) return {};
+    // EVERYTHING_IPC_GET_MAJOR_VERSION, _MINOR_VERSION, _REVISION and _BUILD_NUMBER are 0 to 3.
+    std::wstring version;
+    for (WPARAM part = 0; part < 4; part++)
+    {
+        DWORD_PTR value = 0;
+        if (!SendMessageTimeoutW(window, WM_USER, part, 0, SMTO_ABORTIFHUNG, 200, &value)) return {};
+        if (part) version += L'.';
+        version += std::to_wstring(value);
+    }
+    return version;
+}
+
 std::wstring Everything::ExePath()
 {
     // Prefer the copy that is running; portable installs live anywhere.

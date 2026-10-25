@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/Bilalatss/DeskFind/releases/latest"><img src="https://img.shields.io/github/v/release/Bilalatss/DeskFind?label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-11-0078D4" alt="Windows 11">
-  <img src="https://img.shields.io/badge/size-260%20KB-2ea44f" alt="260 KB">
+  <img src="https://img.shields.io/badge/size-410%20KB-2ea44f" alt="410 KB">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Bilalatss/DeskFind" alt="MIT license"></a>
 </p>
 
@@ -28,7 +28,7 @@ Windows has no quick way to search just the desktop. Start search looks through 
 web results, and Explorer's search needs a window first and takes its time.
 
 DeskFind puts a search box on the desktop's own Ctrl+F, and only there: in every other window, Ctrl+F still belongs
-to the app you're in.
+to the app you're in. If you'd rather have it everywhere, or on other keys, that's one setting away.
 
 ## Features
 
@@ -37,9 +37,10 @@ to the app you're in.
 - **Finds the icon.** Ctrl+Enter selects the file's icon on the desktop itself, or opens its folder in Explorer when it lives elsewhere.
 - **Learns.** What you open often moves up, and the empty box lists what you opened recently.
 - **Skips the noise.** `node_modules`, `.git`, `__pycache__` and similar folders never show up. Neither do the Windows folder, temp files and Windows' *Recent* shortcuts. Build output, app data and logs come after your own files.
-- **Tiny.** A 260 KB exe with no runtime to install. It uses under 1 MB of memory while it waits in the tray.
-- **Looks native.** Acrylic, rounded corners, light and dark mode and your accent color all follow Windows.
-- **English and Turkish**, picked from the Windows display language.
+- **Yours to set up.** A settings window in the style of Windows 11 Settings covers the shortcuts, the result groups, which folders count, the look and more. Every change applies at once.
+- **Tiny.** A 410 KB exe with no runtime to install. It uses under 1 MB of memory while it waits in the tray.
+- **Looks native.** Acrylic, Mica, rounded corners, light and dark mode and your accent color, like Windows itself.
+- **English and Turkish.** It follows the Windows display language unless you pick one.
 - **Private.** No network access, no telemetry.
 
 ## Install
@@ -97,6 +98,7 @@ Click an empty spot on the desktop (or press <kbd>Win</kbd>+<kbd>D</kbd>), press
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> | Copy the full path |
 | <kbd>Ctrl</kbd>+<kbd>E</kbd> | Continue the search in Everything |
 | <kbd>F5</kbd> | Search again |
+| <kbd>Ctrl</kbd>+<kbd>,</kbd> or the ⚙ button | Open the settings |
 | <kbd>Esc</kbd> | Close and go back to the desktop |
 
 **Search tips**
@@ -104,7 +106,24 @@ Click an empty spot on the desktop (or press <kbd>Win</kbd>+<kbd>D</kbd>), press
 - Words match in any order, and case and accents don't matter: `cafe` finds *Café* and `i` finds *ı*.
 - Everything's syntax works as well: `ext:pdf`, `*.psd`, `dm:today`, `!draft`, `invoice | receipt`.
 - Clicking the tray icon (often hidden under <kbd>^</kbd>) or *DeskFind* in the Start menu also opens the box.
-- Right-click the tray icon for *Start with Windows*, *About DeskFind* and *Exit*.
+- Right-click the tray icon for *Settings*, *Start with Windows*, *About DeskFind* and *Exit*.
+
+## Settings
+
+Open them from the tray menu, the ⚙ button in the search box, <kbd>Ctrl</kbd>+<kbd>,</kbd> or `DeskFind.exe --settings`.
+
+<p align="center">
+  <img src="docs/settings.png" width="680" alt="The DeskFind settings window on its Search page: the order, size and switches of the three result groups, then what is searched">
+</p>
+
+| Page | What you can change |
+| --- | --- |
+| **General** | Start with Windows, the tray icon, the language, back to the defaults |
+| **Shortcuts** | The desktop shortcut, and a second one that opens DeskFind over any window (off at first, <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>). Click a shortcut and press new keys; DeskFind tells you when another app already has them. |
+| **Search** | The order of the three groups, how many results each shows, and which are on. Hidden files, developer and system folders, extra folders searched like the desktop (Downloads, say), excluded folders, and ranking. |
+| **Appearance** | Theme, width of the search box, which screen it opens on, transparency, animations, key hints |
+| **Statistics** | Searches, opened items, average answer time, what you open most, Everything's status. Clear the history or reset the counts. |
+| **About** | Version, links and license |
 
 ## How it works
 
@@ -115,7 +134,7 @@ Click an empty spot on the desktop (or press <kbd>Win</kbd>+<kbd>D</kbd>), press
 | **Rest of this PC** | Everything's IPC, with no SDK DLL. Everything sends the 1,000 most recently changed matches and DeskFind ranks them. Answers are cached, and a longer query is filtered locally when a shorter one already returned every match. |
 
 - **Ranking:** the best name match comes first: the exact name, then the start of the name, the start of a word, and anywhere in the name. Among equal matches, what you open often and recently goes up, and build output, caches and app data go down.
-- **Drawing:** DeskFind draws its own window. DirectWrite glyphs are rasterized on the CPU into a bitmap shown in a DWM acrylic window. There is no UI framework and no GPU context, so there is very little to keep in memory while it's hidden.
+- **Drawing:** DeskFind draws its own windows, the settings included. DirectWrite glyphs are rasterized on the CPU into a bitmap shown in a DWM acrylic window. There is no UI framework and no GPU context, so there is very little to keep in memory while it's hidden.
 - **Idle:** a few seconds after the box closes, DeskFind frees its caches, trims its memory and asks Windows to run it in efficiency mode.
 - **Speed:** while the box is open, DeskFind lets Everything out of Windows 11's efficiency mode. Its queries got about 30% faster in testing.
 
@@ -131,7 +150,7 @@ Measured on the author's PC (Windows 11 24H2, about 2.6 million files indexed by
 | Typing on (filtered from the cache) | ~1 ms |
 | Memory while waiting in the tray | 0.3–0.7 MB |
 | Memory with the box open | ~5 MB |
-| Download | 260 KB |
+| Download | 410 KB |
 
 ## Requirements
 
@@ -162,7 +181,8 @@ In this command:
 
 - `>` types one prefix at a time;
 - `+` types them in a burst;
-- `@index` builds the desktop-folder index first.
+- `@index` builds the desktop-folder index first;
+- `@settings` searches the way the saved settings say.
 
 | File | What it does |
 | --- | --- |
@@ -173,6 +193,7 @@ In this command:
 | `src/icons.cpp` | File icons, loaded on a background thread |
 | `src/history.cpp` | What you opened, for ranking and *Recently opened* |
 | `src/tray.cpp`, `src/shell.cpp` | The tray icon and menu; opening, revealing and autostart |
+| `src/settings.cpp`, `src/settingsui.cpp` | The settings, and the window to change them |
 | `src/setup.cpp` | `--install` and `--uninstall` |
 | `src/lang.cpp` | English and Turkish text |
 
@@ -187,8 +208,9 @@ On disk it keeps:
 - a list of what you opened from it (`history.txt`, up to 300 entries), used for ranking and *Recently opened*;
 - an `error.log`, only if something fails.
 
-Both are in `%LOCALAPPDATA%\DeskFind`. In the registry it keeps only its autostart entry, a first-run flag and its
-*Settings › Apps* entry. Uninstalling removes all of them.
+Both are in `%LOCALAPPDATA%\DeskFind`. In the registry, under `HKCU\Software\DeskFind`, it keeps its settings and
+usage counts (numbers only, never names or searches). It also keeps its autostart entry and its *Settings › Apps*
+entry. Uninstalling removes all of them.
 
 ## FAQ
 
@@ -196,7 +218,9 @@ Both are in `%LOCALAPPDATA%\DeskFind`. In the registry it keeps only its autosta
 
 **How do I start it again after *Exit*?** Open *DeskFind* from the Start menu.
 
-**Can I use English on a Turkish Windows, or the other way round?** Set a user environment variable `DESKFIND_LANG` to `en` or `tr`. Then choose *Exit* in the tray menu and start DeskFind again from the Start menu.
+**Can I use English on a Turkish Windows, or the other way round?** Yes: *Settings › General › Language*.
+
+**I turned the tray icon off. How do I get to the settings?** Open the search box and click ⚙ (or press <kbd>Ctrl</kbd>+<kbd>,</kbd>), or start *DeskFind* from the Start menu and do the same.
 
 **Smart App Control blocks it.** Smart App Control blocks unsigned apps and has no exceptions, and DeskFind isn't signed yet.
 

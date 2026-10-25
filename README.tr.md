@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/Bilalatss/DeskFind/releases/latest"><img src="https://img.shields.io/github/v/release/Bilalatss/DeskFind?label=s%C3%BCr%C3%BCm" alt="Son sürüm"></a>
   <img src="https://img.shields.io/badge/Windows-11-0078D4" alt="Windows 11">
-  <img src="https://img.shields.io/badge/boyut-260%20KB-2ea44f" alt="260 KB">
+  <img src="https://img.shields.io/badge/boyut-410%20KB-2ea44f" alt="410 KB">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Bilalatss/DeskFind?label=lisans" alt="MIT lisansı"></a>
 </p>
 
@@ -28,7 +28,7 @@ Windows'ta yalnızca masaüstünü hızlıca aramanın bir yolu yok. Başlat ara
 web sonuçlarını da araya katar. Gezgin araması ise önce bir pencere açmayı gerektirir ve yavaştır.
 
 DeskFind, masaüstünün kendi Ctrl+F'sine bir arama kutusu koyar, ama yalnızca masaüstünde. Diğer her pencerede Ctrl+F o
-uygulamanın kendi kısayolu olarak kalır.
+uygulamanın kendi kısayolu olarak kalır. Her yerde ya da başka tuşlarla açılmasını istersen, bu bir ayar uzaklığında.
 
 ## Özellikler
 
@@ -40,9 +40,10 @@ uygulamanın kendi kısayolu olarak kalır.
   - `node_modules`, `.git`, `__pycache__` ve benzeri klasörler hiç görünmez.
   - Windows klasörü, geçici dosyalar ve Windows'un *Son kullanılanlar* kısayolları da görünmez.
   - Derleme çıktıları, uygulama verileri ve loglar senin dosyalarından sonra gelir.
-- **Küçük.** 260 KB'lık tek bir exe, ayrıca kurulacak bir çalışma ortamı yok. Tepside beklerken 1 MB'tan az bellek kullanır.
-- **Windows'un parçası gibi görünür.** Akrilik arka plan, yuvarlak köşeler, açık/koyu tema ve vurgu rengi Windows'u izler.
-- **Türkçe ve İngilizce.** Dil, Windows'un görüntüleme dilinden seçilir.
+- **Sana göre ayarlanır.** Windows 11 Ayarlar tarzında bir ayarlar penceresi var. Kısayollar, sonuç grupları, hangi klasörlerin arandığı, görünüm ve daha fazlası oradan değişir. Her değişiklik anında uygulanır.
+- **Küçük.** 410 KB'lık tek bir exe, ayrıca kurulacak bir çalışma ortamı yok. Tepside beklerken 1 MB'tan az bellek kullanır.
+- **Windows'un parçası gibi görünür.** Akrilik, Mica, yuvarlak köşeler, açık/koyu tema ve vurgu rengi tıpkı Windows'taki gibi.
+- **Türkçe ve İngilizce.** Sen seçmezsen Windows'un görüntüleme dilini izler.
 - **Gizlilik.** İnternete bağlanmaz, veri toplamaz.
 
 ## Kurulum
@@ -101,6 +102,7 @@ Masaüstünde boş bir yere tıkla (ya da <kbd>Win</kbd>+<kbd>D</kbd>), <kbd>Ctr
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> | Tam yolu kopyala |
 | <kbd>Ctrl</kbd>+<kbd>E</kbd> | Aramaya Everything'de devam et |
 | <kbd>F5</kbd> | Yeniden ara |
+| <kbd>Ctrl</kbd>+<kbd>,</kbd> ya da ⚙ düğmesi | Ayarları aç |
 | <kbd>Esc</kbd> | Kapat ve masaüstüne dön |
 
 **Arama ipuçları**
@@ -108,7 +110,25 @@ Masaüstünde boş bir yere tıkla (ya da <kbd>Win</kbd>+<kbd>D</kbd>), <kbd>Ctr
 - Kelimeler herhangi bir sırayla eşleşir; büyük/küçük harf ve aksanlar önemli değildir: `cafe` *Café*'yi, `i` *ı*'yı bulur.
 - Everything'in sözdizimi de çalışır: `ext:pdf`, `*.psd`, `dm:today`, `!taslak`, `fatura | makbuz`.
 - Kutuyu tepsi simgesine (çoğunlukla <kbd>^</kbd> altında gizlidir) ya da Başlat menüsündeki *DeskFind*'a tıklayarak da açabilirsin.
-- Tepsi simgesine sağ tıkladığında *Windows ile başlat*, *DeskFind hakkında* ve *Çıkış* seçenekleri gelir.
+- Tepsi simgesine sağ tıkladığında *Ayarlar*, *Windows ile başlat*, *DeskFind hakkında* ve *Çıkış* seçenekleri gelir.
+
+## Ayarlar
+
+Ayarları tepsi menüsünden, arama kutusundaki ⚙ düğmesinden, <kbd>Ctrl</kbd>+<kbd>,</kbd> ile ya da `DeskFind.exe --settings`
+komutuyla açabilirsin.
+
+<p align="center">
+  <img src="docs/settings.png" width="680" alt="DeskFind ayarlar penceresinin Arama sayfası: üç sonuç grubunun sırası, boyutu ve anahtarları, ardından neyin arandığı">
+</p>
+
+| Sayfa | Neler değişir |
+| --- | --- |
+| **Genel** | Windows ile başlatma, tepsi simgesi, dil, varsayılanlara dönüş |
+| **Kısayollar** | Masaüstü kısayolu ve DeskFind'ı her pencerenin üstünde açan ikinci bir kısayol (başta kapalı, <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>). Kısayola tıklayıp yeni tuşlara basman yeterli; tuşları başka bir uygulama kullanıyorsa DeskFind söyler. |
+| **Arama** | Üç grubun sırası, her birinin kaç sonuç gösterdiği ve hangilerinin açık olduğu. Gizli dosyalar, geliştirici ve sistem klasörleri, masaüstü gibi aranan ek klasörler (örneğin İndirilenler), hariç tutulan klasörler ve sıralama. |
+| **Görünüm** | Tema, arama kutusunun genişliği, hangi ekranda açıldığı, saydamlık, animasyonlar, tuş ipuçları |
+| **İstatistikler** | Aramalar, açılan öğeler, ortalama cevap süresi, en çok açtıkların, Everything'in durumu. Geçmişi temizleme ve sayaçları sıfırlama. |
+| **Hakkında** | Sürüm, bağlantılar ve lisans |
 
 ## Nasıl çalışır
 
@@ -122,7 +142,7 @@ Masaüstünde boş bir yere tıkla (ya da <kbd>Win</kbd>+<kbd>D</kbd>), <kbd>Ctr
   - Önce adın eşleşme biçimine bakılır: tam ad, adın başı, bir kelimenin başı, adın herhangi bir yeri.
   - Eşleşmesi aynı olanlarda sık ve yakın zamanda açtıkların yukarı çıkar.
   - Derleme çıktıları, önbellekler ve uygulama verileri aşağı iner.
-- **Çizim:** DeskFind penceresini kendisi çizer. DirectWrite ile hazırlanan yazılar işlemcide bir bitmap'e çizilir ve DWM akrilik penceresinde gösterilir. Arayüz çatısı ya da GPU bağlamı yoktur; bu yüzden gizliyken bellekte tutacak pek bir şeyi yoktur.
+- **Çizim:** DeskFind, ayarlar dahil pencerelerini kendisi çizer. DirectWrite ile hazırlanan yazılar işlemcide bir bitmap'e çizilir ve DWM akrilik penceresinde gösterilir. Arayüz çatısı ya da GPU bağlamı yoktur; bu yüzden gizliyken bellekte tutacak pek bir şeyi yoktur.
 - **Boşta:** Kutu kapandıktan birkaç saniye sonra önbelleklerini bırakır, belleğini küçültür ve Windows'tan verimlilik modunda çalışmayı ister.
 - **Hız:** Kutu açıkken DeskFind, Everything'i Windows 11'in verimlilik modundan çıkarır. Testlerde Everything'in sorguları yaklaşık %30 hızlandı.
 
@@ -138,7 +158,7 @@ Geliştiricinin bilgisayarında ölçüldü (Windows 11 24H2, Everything'de yakl
 | Yazmaya devam ederken (önbellekten süzerek) | ~1 ms |
 | Tepside beklerken bellek | 0,3–0,7 MB |
 | Kutu açıkken bellek | ~5 MB |
-| İndirme boyutu | 260 KB |
+| İndirme boyutu | 410 KB |
 
 ## Gereksinimler
 
@@ -171,7 +191,8 @@ Bu komutta:
 
 - `>` önekleri tek tek yazar;
 - `+` önekleri art arda hızlıca yazar;
-- `@index` önce masaüstü klasörleri dizinini kurar.
+- `@index` önce masaüstü klasörleri dizinini kurar;
+- `@settings` kayıtlı ayarlara göre arar.
 
 | Dosya | Ne yapar |
 | --- | --- |
@@ -182,6 +203,7 @@ Bu komutta:
 | `src/icons.cpp` | Arka planda yüklenen dosya simgeleri |
 | `src/history.cpp` | Sıralama ve *Son açılanlar* için açtıkların |
 | `src/tray.cpp`, `src/shell.cpp` | Tepsi simgesi ve menüsü; açma, konum gösterme ve otomatik başlatma |
+| `src/settings.cpp`, `src/settingsui.cpp` | Ayarlar ve onları değiştiren pencere |
 | `src/setup.cpp` | `--install` ve `--uninstall` |
 | `src/lang.cpp` | Türkçe ve İngilizce metinler |
 
@@ -197,8 +219,9 @@ Diskte şunları tutar:
 - Ondan açtığın öğelerin listesi (`history.txt`, en çok 300 kayıt). Sıralama ve *Son açılanlar* için kullanılır.
 - Bir şey ters giderse bir `error.log`.
 
-İkisi de `%LOCALAPPDATA%\DeskFind` klasöründedir. Kayıt defterinde yalnızca otomatik başlatma kaydını, bir ilk
-çalıştırma işaretini ve *Ayarlar › Uygulamalar* kaydını tutar. Kaldırınca hepsi silinir.
+İkisi de `%LOCALAPPDATA%\DeskFind` klasöründedir. Kayıt defterinde, `HKCU\Software\DeskFind` altında, ayarlarını ve
+kullanım sayaçlarını tutar. Sayaçlar yalnızca sayıdır; ad ya da arama içermez. Ayrıca otomatik başlatma kaydı ve
+*Ayarlar › Uygulamalar* kaydı vardır. Kaldırınca hepsi silinir.
 
 ## Sık sorulanlar
 
@@ -206,10 +229,9 @@ Diskte şunları tutar:
 
 ***Çıkış*'tan sonra nasıl yeniden açarım?** Başlat menüsünden *DeskFind*'ı aç.
 
-**Türkçe Windows'ta İngilizce kullanabilir miyim, ya da tersi?**
-1. `DESKFIND_LANG` adında bir kullanıcı ortam değişkeni oluştur ve değerini `en` ya da `tr` yap.
-2. Tepsi menüsünden *Çıkış*'ı seç.
-3. DeskFind'ı Başlat menüsünden yeniden aç.
+**Türkçe Windows'ta İngilizce kullanabilir miyim, ya da tersi?** Evet: *Ayarlar › Genel › Dil*.
+
+**Tepsi simgesini kapattım, ayarlara nasıl ulaşırım?** Arama kutusunu açıp ⚙ düğmesine tıkla (ya da <kbd>Ctrl</kbd>+<kbd>,</kbd>'e bas). DeskFind kapalıysa önce Başlat menüsünden aç.
 
 **Akıllı Uygulama Denetimi engelliyor.** Akıllı Uygulama Denetimi imzasız uygulamaları engeller ve istisna tanımaz. DeskFind henüz imzalı değil.
 

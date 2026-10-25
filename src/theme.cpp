@@ -32,9 +32,28 @@ Argb Theme::Accent()
     return 0xFF000000 | ((abgr & 0xFF) << 16) | (abgr & 0xFF00) | ((abgr >> 16) & 0xFF);
 }
 
-void Theme::Load(float gamma, float grayscaleContrast)
+Argb Theme::AccentShade(int index)
 {
-    dark = AppsDark();
+    // AccentPalette: eight RGBA entries, lightest first; the accent itself is the fourth.
+    uint8_t palette[32] = {};
+    DWORD size = sizeof(palette);
+    if (index >= 0 && index < 7 &&
+        RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent", L"AccentPalette", RRF_RT_REG_BINARY, nullptr,
+                     palette, &size) == ERROR_SUCCESS &&
+        size >= 28)
+    {
+        const uint8_t* p = palette + index * 4;
+        return 0xFF000000 | (uint32_t(p[0]) << 16) | (uint32_t(p[1]) << 8) | p[2];
+    }
+    Argb base = Accent();
+    static constexpr float amounts[] = {0.75f, 0.5f, 0.25f, 0, 0.2f, 0.4f, 0.6f};
+    index = std::clamp(index, 0, 6);
+    return index < 3 ? Mix(base, 0xFFFFFFFF, amounts[index]) : Mix(base, 0xFF000000, amounts[index]);
+}
+
+void Theme::Load(float gamma, float grayscaleContrast, int choice, bool transparency)
+{
+    dark = IsDark(choice);
     accent = Accent();
     Argb* ink = palette.ink;
     if (dark)
@@ -67,6 +86,7 @@ void Theme::Load(float gamma, float grayscaleContrast)
         keyCapBorder = 0x16000000;
         accentFill = accent;
     }
+    if (!transparency) tint = dark ? 0xFF262626 : 0xFFF7F7F7;
     ink[int(Ink::White)] = 0xFFFFFFFF;
     selection = (accentFill & 0x00FFFFFF) | 0x66000000; // 40% of the accent behind selected text
     palette.Build(gamma, grayscaleContrast);

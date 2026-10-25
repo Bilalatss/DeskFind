@@ -3,12 +3,8 @@
 #include <commctrl.h>
 #include <shellapi.h>
 
-#include <cmath>
-
-#include "canvas.h"
 #include "lang.h"
 #include "shell.h"
-#include "theme.h"
 #include "version.h"
 
 namespace
@@ -20,6 +16,8 @@ enum class AppMode : int
 {
     Default,
     AllowDark,
+    ForceDark,
+    ForceLight,
 };
 using SetPreferredAppModeFn = AppMode(WINAPI*)(AppMode);
 using AllowDarkModeForWindowFn = bool(WINAPI*)(HWND, bool);
@@ -41,59 +39,20 @@ void Tray::EnableDarkMenus(HWND owner)
     ThemeChanged();
 }
 
+void Tray::SetMenuTheme(int choice)
+{
+    HMODULE ux = UxTheme();
+    if (!ux) return;
+    if (auto set = reinterpret_cast<SetPreferredAppModeFn>(GetProcAddress(ux, MAKEINTRESOURCEA(135))))
+        set(choice == 1 ? AppMode::ForceLight : choice == 2 ? AppMode::ForceDark : AppMode::AllowDark);
+    ThemeChanged();
+}
+
 void Tray::ThemeChanged()
 {
     HMODULE ux = UxTheme();
     if (!ux) return;
     if (auto flush = reinterpret_cast<FlushMenuThemesFn>(GetProcAddress(ux, MAKEINTRESOURCEA(136)))) flush();
-}
-
-// Accent rounded square with a white search glyph, drawn at the tray's icon size.
-HICON Tray::Render(int size) const
-{
-    Canvas canvas;
-    if (!canvas.Resize(size, size)) return nullptr;
-    RECT all{0, 0, size, size};
-    canvas.FillBackground(all, 0);
-    float s = float(size);
-    canvas.FillRoundRect(0, 0, s, s, s * 0.22f, Theme::Accent());
-    if (text_)
-    {
-        Palette palette;
-        palette.ink[int(Ink::White)] = 0xFFFFFFFF;
-        palette.Build(text_->Gamma(), text_->GrayscaleContrast());
-        TextStyle style{Font::Icons, std::round(s * 0.58f), false, Ink::White};
-        TextBlock glyph = text_->Render(L"", style);
-        int x = int(std::lround((s - glyph.width) / 2)), y = int(std::lround((s - glyph.height) / 2 + s * 0.02f));
-        canvas.DrawText(glyph, x, y, palette);
-    }
-
-    // Icons take straight alpha.
-    std::vector<uint32_t> pixels(canvas.Pixels(), canvas.Pixels() + size * size);
-    for (uint32_t& p : pixels)
-    {
-        uint32_t a = p >> 24;
-        if (a == 0 || a == 255) continue;
-        uint32_t r = std::min(255u, ((p >> 16) & 0xFF) * 255 / a), g = std::min(255u, ((p >> 8) & 0xFF) * 255 / a), b = std::min(255u, (p & 0xFF) * 255 / a);
-        p = (a << 24) | (r << 16) | (g << 8) | b;
-    }
-    BITMAPINFO bi{};
-    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-    bi.bmiHeader.biWidth = size;
-    bi.bmiHeader.biHeight = -size;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    void* bits = nullptr;
-    HBITMAP color = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!color) return nullptr;
-    memcpy(bits, pixels.data(), pixels.size() * 4);
-    HBITMAP mask = CreateBitmap(size, size, 1, 1, nullptr);
-    ICONINFO info{TRUE, 0, 0, mask, color};
-    HICON icon = CreateIconIndirect(&info);
-    DeleteObject(color);
-    DeleteObject(mask);
-    return icon;
 }
 
 bool Tray::Add(bool modify)
@@ -104,7 +63,7 @@ bool Tray::Add(bool modify)
     data.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_SHOWTIP;
     data.uCallbackMessage = WM_APP_TRAY;
     data.hIcon = icon_;
-    wcscpy_s(data.szTip, Lang::Get().trayTip);
+    wcsncpy_s(data.szTip, tip_.c_str(), _TRUNCATE);
     if (!Shell_NotifyIconW(modify ? NIM_MODIFY : NIM_ADD, &data)) return false;
     if (!modify)
     {
@@ -114,18 +73,20 @@ bool Tray::Add(bool modify)
     return true;
 }
 
-void Tray::Create(HWND owner, const TextEngine* text)
+void Tray::Create(HWND owner)
 {
     owner_ = owner;
-    text_ = text;
     EnableDarkMenus(owner);
     Refresh();
 }
 
 void Tray::Refresh()
 {
+    // The app icon at the tray's size: its small entries are a simpler drawing made for it (tools/make-icon.py).
     HICON old = icon_;
-    icon_ = Render(GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem()));
+    icon_ = nullptr;
+    int size = GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem());
+    LoadIconWithScaleDown(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), size, size, &icon_);
     // After an Explorer restart the old icon is gone, so modifying fails and it is added again.
     if (!added_ || !Add(true)) added_ = Add(false);
     if (old) DestroyIcon(old);
@@ -163,15 +124,18 @@ void Tray::Notify(const wchar_t* title, const wchar_t* text)
     Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
-UINT Tray::ShowMenu(POINT at)
+UINT Tray::ShowMenu(POINT at, const std::wstring& searchKeys)
 {
     HMENU menu = CreatePopupMenu();
     const Lang& lang = Lang::Get();
+    std::wstring search = std::wstring(lang.menuSearch) + (searchKeys.empty() ? L"" : L"\t" + searchKeys);
     std::wstring about = std::wstring(lang.menuAbout) + L"\tv" DESKFIND_VERSION;
-    AppendMenuW(menu, MF_STRING, TrayCmdSearch, lang.menuSearch);
-    AppendMenuW(menu, MF_STRING | (Autostart::IsEnabled() ? MF_CHECKED : 0), TrayCmdAutostart, lang.menuAutostart);
+    AppendMenuW(menu, MF_STRING, TrayCmdSearch, search.c_str());
+    AppendMenuW(menu, MF_STRING, TrayCmdSettings, lang.menuSettings);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (Autostart::IsEnabled() ? MF_CHECKED : 0), TrayCmdAutostart, lang.menuAutostart);
     AppendMenuW(menu, MF_STRING, TrayCmdAbout, about.c_str());
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, TrayCmdExit, lang.menuExit);
     SetMenuDefaultItem(menu, TrayCmdSearch, FALSE);
     // The menu only closes on an outside click if its owner is the foreground window.

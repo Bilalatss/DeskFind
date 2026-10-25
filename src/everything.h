@@ -50,6 +50,7 @@ public:
     static bool IsRunning() { return Window() != nullptr; }
     static bool IsReady(); // running and its database loaded (asks Everything, at most ~150 ms)
     static std::wstring ExePath();
+    static std::wstring Version(); // "1.4.1.1032", empty when it doesn't answer
     static bool Launch(const std::wstring& args);
     static void Boost(bool on); // full CPU speed for Everything while the search box is open
 

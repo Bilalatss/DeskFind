@@ -61,6 +61,14 @@ void History::Load()
     Reindex();
 }
 
+void History::Clear()
+{
+    entries_.clear();
+    loaded_ = true;
+    Reindex();
+    Save();
+}
+
 void History::Reindex()
 {
     version_++;

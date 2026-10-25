@@ -4,6 +4,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <commctrl.h>
 #include <commoncontrols.h>
 
 #include <cmath>
@@ -255,6 +256,18 @@ private:
     int size_ = 24;
 };
 } // namespace
+
+std::vector<uint32_t> IconLoader::AppIcon(int size)
+{
+    HICON icon = nullptr;
+    std::vector<uint32_t> pixels;
+    int w = 0, h = 0;
+    if (FAILED(LoadIconWithScaleDown(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), size, size, &icon)) || !icon) return pixels;
+    if (IconPixels(icon, pixels, w, h) && w > 0 && h > 0) pixels = Resample(pixels, w, h, size);
+    else pixels.clear();
+    DestroyIcon(icon);
+    return pixels;
+}
 
 std::wstring IconLoader::KeyFor(std::wstring_view path, bool folder)
 {

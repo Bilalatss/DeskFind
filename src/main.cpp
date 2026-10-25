@@ -6,7 +6,7 @@
 #include "setup.h"
 
 int RunSelfTest(int argc, wchar_t** argv);
-int RunApp(bool show);
+int RunApp(int start); // 0 in the background, 1 with the search box open, 2 with the settings open
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
@@ -32,7 +32,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     else
     {
         // Started by hand (Start menu, the exe): show the box. Autostart and the installer pass --background.
-        code = RunApp(wcscmp(command, L"--background") != 0);
+        code = RunApp(wcscmp(command, L"--background") == 0 ? 0 : wcscmp(command, L"--settings") == 0 ? 2 : 1);
     }
     LocalFree(argv);
     return code;

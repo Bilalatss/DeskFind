@@ -21,6 +21,8 @@ public:
 
     // Generic per-extension icons share one key; types with their own icon get one per file.
     static std::wstring KeyFor(std::wstring_view path, bool folder);
+    // DeskFind's own icon at `size`, as premultiplied pixels (empty if it can't be loaded).
+    static std::vector<uint32_t> AppIcon(int size);
 
 private:
     struct Job
