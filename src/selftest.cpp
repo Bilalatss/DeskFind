@@ -1,4 +1,6 @@
-// DeskFind.exe --selftest out.txt [@settings] [@boost] [@index] query...  (@settings: search as the saved settings say) : runs the search pipeline without UI and writes what it found and how long it took.
+// DeskFind.exe --selftest out.txt [@settings] [@boost] [@index|@walk] query...  (@settings: search as the saved settings say;
+// @walk: the desktop folder index read from disk, as without Everything) : runs the search pipeline without UI and writes
+// what it found and how long it took.
 // A query written as "a>b>c" is typed one prefix at a time, the way the search box sends it.
 #include "search.h"
 #include "settings.h"
@@ -32,13 +34,14 @@ struct Harness
         else DispatchMessageW(&msg);
     }
 
-    void BuildIndex()
+    void BuildIndex(bool fromDisk)
     {
         double started = PreciseMs();
-        search.PrepareIndex();
+        search.PrepareIndex(fromDisk);
         while (!search.IndexReady() && PreciseMs() - started < 5000) Pump();
         wchar_t line[128];
-        swprintf_s(line, L"index ready=%d in %.1f ms, %.0f KB\r\n", search.IndexReady(), PreciseMs() - started, search.IndexBytes() / 1024.0);
+        swprintf_s(line, L"index%ls ready=%d in %.1f ms, %zu entries, %.0f KB\r\n", fromDisk ? L" (disk)" : L"", search.IndexReady(), PreciseMs() - started,
+                   search.IndexEntries(), search.IndexBytes() / 1024.0);
         log += line;
     }
 
@@ -81,9 +84,9 @@ int RunSelfTest(int argc, wchar_t** argv)
     for (int i = 2; i < argc; i++)
     {
         std::wstring spec = argv[i];
-        if (spec == L"@index")
+        if (spec == L"@index" || spec == L"@walk")
         {
-            h.BuildIndex();
+            h.BuildIndex(spec == L"@walk");
             continue;
         }
         if (spec == L"@settings")

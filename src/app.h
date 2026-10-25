@@ -33,22 +33,44 @@ public:
     void SuspendHotkeys(bool suspend) override;
     TextEngine& Text() override { return text_; }
     void SettingsClosed() override;
+    EvStatus EverythingStatus() const override;
+    void InstallEverything(HWND owner) override;
+    void StartEverything() override;
 
 private:
+    // A row in the rest-of-PC group that stands in for Everything when it can't answer: what is wrong, what a click does.
+    enum class Notice : uint8_t
+    {
+        None,
+        Install,  // winget installs it
+        Download, // its download page opens
+        Installing,
+        Retry, // it didn't start: start it again
+    };
+
+    // What clicking the last notification does.
+    enum class Balloon : uint8_t
+    {
+        Search,
+        Everything, // the settings, at Everything's card
+        Download,
+    };
+
     struct Row
     {
         bool header = false;
         Tier tier = Tier::Desktop;
+        Notice notice = Notice::None;
         std::wstring title, count; // header
         Result result;             // item
-        std::wstring display, location, kind, iconKey;
+        std::wstring display, location, kind, iconKey; // a notice keeps its glyph in iconKey
         std::vector<Span> spans;
         int top = 0, height = 0; // pixels, in list content coordinates
 
         // Rendered text, kept only while the row is near the viewport.
         bool rendered = false;
         int renderedWidth = 0;
-        TextBlock first, second, third; // name/location/kind, or title/count
+        TextBlock first, second, third; // name/location/kind, title/count, or a notice's title/description/glyph
     };
 
     struct IconEntry
@@ -95,7 +117,7 @@ private:
     void ReleaseMemory();
     static void SetIdle(bool idle);
     void Exit();
-    void OpenSettings();
+    void OpenSettings(bool everything = false);
     void UpdateHotkeys();
     void UpdateTray();
     void CountAnswer();
@@ -131,6 +153,14 @@ private:
     void UpdateStatus();
     void SetStatus(const std::wstring& text);
     void EverythingMissing();
+    Notice CurrentNotice() const;
+    void AddNotice(std::vector<Row>& rows, Notice notice, bool header) const;
+    void RunNotice(Notice notice);
+    void OpenDownloadPage();
+    static void CALLBACK OnInstallExit(void* context, BOOLEAN timedOut);
+    void InstallDone();
+    void EverythingChanged();
+    void Notify(const wchar_t* title, const wchar_t* text, Balloon click);
 
     // Painting.
     void Paint(HDC hdc, const RECT& dirty);
@@ -251,7 +281,11 @@ private:
     double animStart_ = 0;
     bool animating_ = false;
 
-    // Everything start-up retry.
+    // Everything: start-up retries, and what the notice row knows.
     uint64_t lastLaunch_ = 0;
     int retries_ = 0;
+    bool evInstalled_ = true, evInstalling_ = false, evInstallFailed_ = false, evStartFailed_ = false;
+    bool evStatus_ = false; // the footer says what Everything is doing
+    HANDLE installProcess_ = nullptr, installWait_ = nullptr;
+    Balloon balloon_ = Balloon::Search;
 };

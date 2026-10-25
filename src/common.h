@@ -29,6 +29,7 @@ enum : UINT
     WM_APP_SHOW,                    // another instance asked us to show the search box
     WM_APP_QUIT,                    // the installer is replacing or removing us
     WM_APP_SETTINGS,                // another instance asked us to open the settings
+    WM_APP_SETUP,                   // the Everything installer has finished (or timed out)
 };
 
 // The main window, which other copies of DeskFind look for.

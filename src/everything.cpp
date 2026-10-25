@@ -1,6 +1,7 @@
 #include "everything.h"
 
 #include <shellapi.h>
+#include <shlobj.h>
 
 namespace
 {
@@ -58,6 +59,20 @@ bool Parse(EvReply& reply, size_t size)
         reply.items.push_back(item);
     }
     return true;
+}
+
+// The App Installer alias first: a winget.exe found through the search path could be anyone's.
+std::wstring WingetPath()
+{
+    std::wstring alias = KnownFolder(FOLDERID_LocalAppData);
+    if (!alias.empty())
+    {
+        alias += L"\\Microsoft\\WindowsApps\\winget.exe";
+        if (GetFileAttributesW(alias.c_str()) != INVALID_FILE_ATTRIBUTES) return alias;
+    }
+    wchar_t found[MAX_PATH];
+    if (SearchPathW(nullptr, L"winget.exe", nullptr, MAX_PATH, found, nullptr)) return found;
+    return {};
 }
 } // namespace
 
@@ -121,7 +136,43 @@ std::wstring Everything::ExePath()
             if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return path;
         }
     }
+    // Installed somewhere else: its start-on-sign-in entry names the exe.
+    for (HKEY hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+    {
+        wchar_t command[MAX_PATH * 2];
+        DWORD size = sizeof(command);
+        if (RegGetValueW(hive, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", L"Everything", RRF_RT_REG_SZ, nullptr, command, &size) != ERROR_SUCCESS)
+            continue;
+        std::wstring path = command[0] == L'"' ? command + 1 : command;
+        std::wstring lower = path;
+        for (wchar_t& c : lower) c = LowerChar(c);
+        size_t exe = lower.find(L".exe");
+        if (exe == std::wstring::npos) continue;
+        path.resize(exe + 4);
+        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return path;
+    }
     return {};
+}
+
+bool Everything::CanInstall() { return !WingetPath().empty(); }
+
+// Everything installs per machine, so winget runs elevated from the start: one UAC prompt, in front of `owner`, and
+// none later from winget itself that could end up blinking on the taskbar. Its console stays hidden.
+EvSetup Everything::Install(HWND owner, HANDLE& process)
+{
+    process = nullptr;
+    std::wstring winget = WingetPath();
+    if (winget.empty()) return EvSetup::NoWinget;
+    SHELLEXECUTEINFOW info{sizeof(info)};
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+    info.hwnd = owner;
+    info.lpVerb = L"runas";
+    info.lpFile = winget.c_str();
+    info.lpParameters = L"install --id voidtools.Everything --exact --source winget --silent --accept-package-agreements --accept-source-agreements";
+    info.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&info)) return GetLastError() == ERROR_CANCELLED ? EvSetup::Cancelled : EvSetup::Failed;
+    process = info.hProcess;
+    return process ? EvSetup::Started : EvSetup::Failed;
 }
 
 // Windows runs a windowless background process like Everything on efficiency cores at low clocks (EcoQoS),

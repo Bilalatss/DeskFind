@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/Bilalatss/DeskFind/releases/latest"><img src="https://img.shields.io/github/v/release/Bilalatss/DeskFind?label=s%C3%BCr%C3%BCm" alt="Son sürüm"></a>
   <img src="https://img.shields.io/badge/Windows-11-0078D4" alt="Windows 11">
-  <img src="https://img.shields.io/badge/boyut-410%20KB-2ea44f" alt="410 KB">
+  <img src="https://img.shields.io/badge/boyut-430%20KB-2ea44f" alt="430 KB">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Bilalatss/DeskFind?label=lisans" alt="MIT lisansı"></a>
 </p>
 
@@ -41,14 +41,15 @@ uygulamanın kendi kısayolu olarak kalır. Her yerde ya da başka tuşlarla aç
   - Windows klasörü, geçici dosyalar ve Windows'un *Son kullanılanlar* kısayolları da görünmez.
   - Derleme çıktıları, uygulama verileri ve loglar senin dosyalarından sonra gelir.
 - **Sana göre ayarlanır.** Windows 11 Ayarlar tarzında bir ayarlar penceresi var. Kısayollar, sonuç grupları, hangi klasörlerin arandığı, görünüm ve daha fazlası oradan değişir. Her değişiklik anında uygulanır.
-- **Küçük.** 410 KB'lık tek bir exe, ayrıca kurulacak bir çalışma ortamı yok. Tepside beklerken 1 MB'tan az bellek kullanır.
+- **Küçük.** 430 KB'lık tek bir exe, ayrıca kurulacak bir çalışma ortamı yok. Tepside beklerken 1 MB'tan az bellek kullanır.
 - **Windows'un parçası gibi görünür.** Akrilik, Mica, yuvarlak köşeler, açık/koyu tema ve vurgu rengi tıpkı Windows'taki gibi.
 - **Türkçe ve İngilizce.** Sen seçmezsen Windows'un görüntüleme dilini izler.
 - **Gizlilik.** İnternete bağlanmaz, veri toplamaz.
 
 ## Kurulum
 
-Windows 11 ve [Everything](https://www.voidtools.com/downloads/) (ücretsiz) gerekir. PowerShell'e şunu yapıştır:
+Windows 11 gerekir. Masaüstünün dışında da aramak için [Everything](https://www.voidtools.com/downloads/) (ücretsiz)
+lazım; betik onu kurmayı önerir. PowerShell'e şunu yapıştır:
 
 ```powershell
 irm https://raw.githubusercontent.com/Bilalatss/DeskFind/main/install.ps1 | iex
@@ -57,12 +58,13 @@ irm https://raw.githubusercontent.com/Bilalatss/DeskFind/main/install.ps1 | iex
 [Betik](install.ps1) şunları yapar:
 
 - Son sürümdeki `DeskFind.exe`'yi indirir ve SHA-256 özetini sürümdekiyle karşılaştırır.
+- Everything kurulu değilse winget ile kurmayı önerir.
 - Dosyayı `%LOCALAPPDATA%\Programs\DeskFind` klasörüne kopyalar.
 - DeskFind'ı Başlat menüsüne ve *Ayarlar › Uygulamalar*'a ekler.
 - DeskFind'ı başlatır.
 
 Bundan sonra DeskFind Windows ile birlikte açılır; bunu tepsi menüsünden kapatabilirsin. Betik yönetici yetkisi
-istemez. Everything kurulu değilse winget ile kurmayı önerir. Güncellemek için aynı satırı tekrar çalıştırman yeterli.
+istemez (Everything'in kurulumu bir kez ister). Güncellemek için aynı satırı tekrar çalıştırman yeterli.
 
 <details>
 <summary>Neden setup.exe ya da .msi değil de komut?</summary>
@@ -125,9 +127,9 @@ komutuyla açabilirsin.
 | --- | --- |
 | **Genel** | Windows ile başlatma, tepsi simgesi, dil, varsayılanlara dönüş |
 | **Kısayollar** | Masaüstü kısayolu ve DeskFind'ı her pencerenin üstünde açan ikinci bir kısayol (başta kapalı, <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>). Kısayola tıklayıp yeni tuşlara basman yeterli; tuşları başka bir uygulama kullanıyorsa DeskFind söyler. |
-| **Arama** | Üç grubun sırası, her birinin kaç sonuç gösterdiği ve hangilerinin açık olduğu. Gizli dosyalar, geliştirici ve sistem klasörleri, masaüstü gibi aranan ek klasörler (örneğin İndirilenler), hariç tutulan klasörler ve sıralama. |
+| **Arama** | Üç grubun sırası, her birinin kaç sonuç gösterdiği ve hangilerinin açık olduğu. Gizli dosyalar, geliştirici ve sistem klasörleri, masaüstü gibi aranan ek klasörler (örneğin İndirilenler), hariç tutulan klasörler ve sıralama. Everything'in durumu ve onu kuran ya da başlatan bir düğme. |
 | **Görünüm** | Tema, arama kutusunun genişliği, hangi ekranda açıldığı, saydamlık, animasyonlar, tuş ipuçları |
-| **İstatistikler** | Aramalar, açılan öğeler, ortalama cevap süresi, en çok açtıkların, Everything'in durumu. Geçmişi temizleme ve sayaçları sıfırlama. |
+| **İstatistikler** | Aramalar, açılan öğeler, ortalama cevap süresi, en çok açtıkların, klasör dizininin boyutu. Geçmişi temizleme ve sayaçları sıfırlama. |
 | **Hakkında** | Sürüm, bağlantılar ve lisans |
 
 ## Nasıl çalışır
@@ -135,7 +137,7 @@ komutuyla açabilirsin.
 | Grup | Kaynak |
 | --- | --- |
 | **Masaüstü** | Kutu her açıldığında doğrudan diskten listelenir, bu yüzden hep günceldir. Gezgin'in gizli dosya ayarlarına uyar ve Ortak masaüstünü de kapsar. |
-| **Masaüstündeki klasörler** | Kutu açılınca tek bir Everything sorgusu, masaüstünün altındaki tüm dosya ve klasörleri bellekteki küçük bir dizine yükler (26.000 kayıt 1,4 MB tutar). Her tuşta bu dizin yerelde süzülür. Dizin, kutu kapandıktan birkaç saniye sonra bellekten atılır. |
+| **Masaüstündeki klasörler** | Kutu açılınca tek bir Everything sorgusu, masaüstünün altındaki tüm dosya ve klasörleri bellekteki küçük bir dizine yükler (26.000 kayıt 1,4 MB tutar). Everything yoksa aynı ağaç arka planda diskten okunur (26.000 kayıt yaklaşık 0,3 sn). Her tuşta bu dizin yerelde süzülür. Dizin, kutu kapandıktan birkaç saniye sonra bellekten atılır. |
 | **Bilgisayarın geri kalanı** | Everything'in IPC arayüzüyle çalışır; SDK DLL'i gerekmez. Everything en son değişen 1.000 eşleşmeyi gönderir, DeskFind bunları sıralar. Cevaplar önbelleğe alınır. Kısa bir sorgu tüm eşleşmeleri getirdiyse, onu uzatan sorgu yerelde süzülür. |
 
 - **Sıralama:**
@@ -158,18 +160,19 @@ Geliştiricinin bilgisayarında ölçüldü (Windows 11 24H2, Everything'de yakl
 | Yazmaya devam ederken (önbellekten süzerek) | ~1 ms |
 | Tepside beklerken bellek | 0,3–0,7 MB |
 | Kutu açıkken bellek | ~5 MB |
-| İndirme boyutu | 410 KB |
+| İndirme boyutu | 430 KB |
 
 ## Gereksinimler
 
 - **Windows 11**, x64.
   - 24H2'de derlendi ve test edildi.
   - Windows 10'da test edilmedi; pencere Windows 11'in akrilik arka planına ve yuvarlak köşelerine dayanıyor.
-- **voidtools [Everything](https://www.voidtools.com/downloads/) 1.4**, normal sürüm.
+- **voidtools [Everything](https://www.voidtools.com/downloads/) 1.4**, normal sürüm; bilgisayarın geri kalanı için.
   - IPC'si olmayan *Everything Lite* çalışmaz.
   - Everything kurulu ama kapalıysa DeskFind onu başlatır.
   - 1.4.1 ile test edildi. 1.5 alfa sürümünün çalışması gerekir ama test edilmedi.
-  - Everything olmadan yalnızca masaüstünün kendisi aranır.
+  - Everything olmadan da masaüstü ve klasörleri aranır. *Bilgisayarın geri kalanı* grubunda o zaman bir satır çıkar:
+    Everything'i winget ile kurar (bir kez yönetici onayı ister) ya da indirme sayfasını açar.
 
 ## Kaynaktan derleme
 
@@ -236,6 +239,10 @@ kullanım sayaçlarını tutar. Sayaçlar yalnızca sayıdır; ad ya da arama i�
 **Akıllı Uygulama Denetimi engelliyor.** Akıllı Uygulama Denetimi imzasız uygulamaları engeller ve istisna tanımaz. DeskFind henüz imzalı değil.
 
 **Hangi ekranda açılır?** Fare imlecinin bulunduğu ekranda.
+
+**Everything'i kurmak zorunda mıyım?** Hayır. Masaüstü ve klasörleri onsuz da aranır; Everything'e yalnızca
+*Bilgisayarın geri kalanı* grubu ihtiyaç duyar. O grupta çıkan satıra tıklarsan Everything kurulur. Satırı görmek
+istemezsen grubu *Ayarlar › Arama*'dan kapat.
 
 ## Lisans
 

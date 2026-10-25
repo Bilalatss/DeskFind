@@ -36,8 +36,17 @@ struct Lang
     const wchar_t* everythingLoading;
     const wchar_t* everythingStarting;
     const wchar_t* everythingMissing;
-    const wchar_t* everythingNoStart;
     const wchar_t* everythingNoOpen;
+    // The notice row in the rest-of-PC group.
+    const wchar_t* noticeInstall;
+    const wchar_t* noticeInstallDesc;
+    const wchar_t* noticeDownloadDesc;
+    const wchar_t* noticeInstallFailed;
+    const wchar_t* noticeInstallFailedDesc;
+    const wchar_t* noticeInstalling;
+    const wchar_t* noticeInstallingDesc;
+    const wchar_t* noticeNoStart;
+    const wchar_t* noticeNoStartDesc;
 
     // Tray and setup.
     const wchar_t* trayTip; // "%s": the desktop shortcut
@@ -48,6 +57,13 @@ struct Lang
     const wchar_t* menuExit;
     const wchar_t* welcomeTitle;
     const wchar_t* welcomeText;
+    const wchar_t* welcomeEverything; // the welcome when Everything isn't installed
+    const wchar_t* installingTitle;
+    const wchar_t* installingText;
+    const wchar_t* installedTitle;
+    const wchar_t* installedText;
+    const wchar_t* installFailedTitle;
+    const wchar_t* installFailedText;
     const wchar_t* uninstalled;
 
     // Settings window.
@@ -161,6 +177,11 @@ struct Lang
     const wchar_t* everythingRunning; // "%s": the version
     const wchar_t* everythingRunningPlain;
     const wchar_t* everythingStopped;
+    const wchar_t* everythingNotInstalled;
+    const wchar_t* everythingInstalling;
+    const wchar_t* installButton;
+    const wchar_t* downloadButton;
+    const wchar_t* startButton;
     const wchar_t* indexTitle;
     const wchar_t* indexReady; // "%s entries · %s"
     const wchar_t* indexIdle;

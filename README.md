@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/Bilalatss/DeskFind/releases/latest"><img src="https://img.shields.io/github/v/release/Bilalatss/DeskFind?label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-11-0078D4" alt="Windows 11">
-  <img src="https://img.shields.io/badge/size-410%20KB-2ea44f" alt="410 KB">
+  <img src="https://img.shields.io/badge/size-430%20KB-2ea44f" alt="430 KB">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Bilalatss/DeskFind" alt="MIT license"></a>
 </p>
 
@@ -38,14 +38,15 @@ to the app you're in. If you'd rather have it everywhere, or on other keys, that
 - **Learns.** What you open often moves up, and the empty box lists what you opened recently.
 - **Skips the noise.** `node_modules`, `.git`, `__pycache__` and similar folders never show up. Neither do the Windows folder, temp files and Windows' *Recent* shortcuts. Build output, app data and logs come after your own files.
 - **Yours to set up.** A settings window in the style of Windows 11 Settings covers the shortcuts, the result groups, which folders count, the look and more. Every change applies at once.
-- **Tiny.** A 410 KB exe with no runtime to install. It uses under 1 MB of memory while it waits in the tray.
+- **Tiny.** A 430 KB exe with no runtime to install. It uses under 1 MB of memory while it waits in the tray.
 - **Looks native.** Acrylic, Mica, rounded corners, light and dark mode and your accent color, like Windows itself.
 - **English and Turkish.** It follows the Windows display language unless you pick one.
 - **Private.** No network access, no telemetry.
 
 ## Install
 
-You need Windows 11 and [Everything](https://www.voidtools.com/downloads/) (free). Paste this into PowerShell:
+You need Windows 11. To search beyond the desktop you also need [Everything](https://www.voidtools.com/downloads/) (free),
+which the script offers to install. Paste this into PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/Bilalatss/DeskFind/main/install.ps1 | iex
@@ -54,12 +55,13 @@ irm https://raw.githubusercontent.com/Bilalatss/DeskFind/main/install.ps1 | iex
 The [script](install.ps1):
 
 - downloads `DeskFind.exe` from the latest release and checks its SHA-256 against the release;
+- offers to install Everything with winget if it is missing;
 - copies it to `%LOCALAPPDATA%\Programs\DeskFind`;
 - adds it to the Start menu and to *Settings › Apps*;
 - starts it.
 
-From then on DeskFind starts with Windows; you can turn that off in the tray menu. The script needs no admin rights,
-and if Everything is missing it offers to install it with winget. Run the same line again to update.
+From then on DeskFind starts with Windows; you can turn that off in the tray menu. The script needs no admin rights
+(installing Everything asks for them once). Run the same line again to update.
 
 <details>
 <summary>Why a command and not a setup.exe or .msi?</summary>
@@ -120,9 +122,9 @@ Open them from the tray menu, the ⚙ button in the search box, <kbd>Ctrl</kbd>+
 | --- | --- |
 | **General** | Start with Windows, the tray icon, the language, back to the defaults |
 | **Shortcuts** | The desktop shortcut, and a second one that opens DeskFind over any window (off at first, <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>). Click a shortcut and press new keys; DeskFind tells you when another app already has them. |
-| **Search** | The order of the three groups, how many results each shows, and which are on. Hidden files, developer and system folders, extra folders searched like the desktop (Downloads, say), excluded folders, and ranking. |
+| **Search** | The order of the three groups, how many results each shows, and which are on. Hidden files, developer and system folders, extra folders searched like the desktop (Downloads, say), excluded folders, and ranking. Everything's status, with a button that installs or starts it. |
 | **Appearance** | Theme, width of the search box, which screen it opens on, transparency, animations, key hints |
-| **Statistics** | Searches, opened items, average answer time, what you open most, Everything's status. Clear the history or reset the counts. |
+| **Statistics** | Searches, opened items, average answer time, what you open most, the size of the folder index. Clear the history or reset the counts. |
 | **About** | Version, links and license |
 
 ## How it works
@@ -130,7 +132,7 @@ Open them from the tray menu, the ⚙ button in the search box, <kbd>Ctrl</kbd>+
 | Group | Source |
 | --- | --- |
 | **Desktop** | Listed straight from disk each time the box opens, so it's always current. It follows Explorer's hidden-file settings and includes the Public desktop. |
-| **In desktop folders** | When the box opens, one Everything query loads every file and folder under the desktop into a compact in-memory index (26,000 entries take 1.4 MB). Each keystroke filters it locally. The index is dropped a few seconds after the box closes. |
+| **In desktop folders** | When the box opens, one Everything query loads every file and folder under the desktop into a compact in-memory index (26,000 entries take 1.4 MB). Without Everything, the same tree is read from disk on a background thread (about 0.3 s for 26,000 entries). Each keystroke filters it locally. The index is dropped a few seconds after the box closes. |
 | **Rest of this PC** | Everything's IPC, with no SDK DLL. Everything sends the 1,000 most recently changed matches and DeskFind ranks them. Answers are cached, and a longer query is filtered locally when a shorter one already returned every match. |
 
 - **Ranking:** the best name match comes first: the exact name, then the start of the name, the start of a word, and anywhere in the name. Among equal matches, what you open often and recently goes up, and build output, caches and app data go down.
@@ -150,16 +152,17 @@ Measured on the author's PC (Windows 11 24H2, about 2.6 million files indexed by
 | Typing on (filtered from the cache) | ~1 ms |
 | Memory while waiting in the tray | 0.3–0.7 MB |
 | Memory with the box open | ~5 MB |
-| Download | 410 KB |
+| Download | 430 KB |
 
 ## Requirements
 
 - **Windows 11**, x64. It is built and tested on 24H2. Windows 10 is untested; the window relies on Windows 11's acrylic and rounded corners.
-- **[Everything](https://www.voidtools.com/downloads/) 1.4** by voidtools, the regular version.
+- **[Everything](https://www.voidtools.com/downloads/) 1.4** by voidtools, the regular version, for the rest of the PC.
   - *Everything Lite* has no IPC, so it won't work.
   - If Everything is installed but not running, DeskFind starts it.
   - Tested with 1.4.1. The 1.5 alpha should work but is untested.
-  - Without Everything, only the desktop itself is searched.
+  - Without Everything, the desktop and its folders are still searched. The *Rest of this PC* group then shows a row
+    that installs Everything with winget (one UAC prompt) or opens its download page.
 
 ## Build from source
 
@@ -225,6 +228,10 @@ entry. Uninstalling removes all of them.
 **Smart App Control blocks it.** Smart App Control blocks unsigned apps and has no exceptions, and DeskFind isn't signed yet.
 
 **Which monitor does it open on?** The one your mouse pointer is on.
+
+**Do I have to install Everything?** No. The desktop and its folders are searched without it; only the *Rest of this PC*
+group needs it. Click the row that group shows to install Everything, or turn the group off in *Settings › Search*
+and the row goes away.
 
 ## License
 

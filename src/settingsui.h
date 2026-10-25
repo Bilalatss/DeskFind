@@ -4,6 +4,7 @@
 #include "common.h"
 
 #include "canvas.h"
+#include "everything.h"
 #include "history.h"
 #include "settings.h"
 #include "text.h"
@@ -26,6 +27,9 @@ public:
     virtual void SuspendHotkeys(bool suspend) = 0;          // while a new shortcut is being typed
     virtual TextEngine& Text() = 0;
     virtual void SettingsClosed() = 0;
+    virtual EvStatus EverythingStatus() const = 0;
+    virtual void InstallEverything(HWND owner) = 0; // winget behind a UAC prompt over `owner`, or the download page
+    virtual void StartEverything() = 0;
 
 protected:
     ~SettingsHost() = default;
@@ -34,10 +38,11 @@ protected:
 class SettingsWindow
 {
 public:
-    void Open(SettingsHost* host);
+    void Open(SettingsHost* host, bool everything = false); // everything: on the Search page, at Everything's card
     void Close();
     bool IsOpen() const { return hwnd_ != nullptr; }
     void Refresh(); // a setting changed elsewhere (the tray menu) or the system theme changed
+    void EverythingChanged(); // installed, started or stopped: the Search page follows if its card shows something else
 
 private:
     enum class Page : uint8_t
@@ -85,6 +90,8 @@ private:
         ResetStats,
         OpenDataFolder,
         OpenUrl,
+        EverythingInstall,
+        EverythingStart,
     };
 
     struct Control
@@ -238,6 +245,7 @@ private:
     std::vector<Anim> anims_;
     std::vector<TextBlock> navText_, navGlyphs_;
     TextBlock appName_, appVersion_, pageTitle_;
+    EvStatus shownStatus_ = EvStatus::Running; // what Everything's card on the Search page says
     std::vector<std::pair<int, std::vector<uint32_t>>> appIcons_; // by size
 
     // The open drop-down.

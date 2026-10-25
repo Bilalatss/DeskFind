@@ -38,6 +38,7 @@ constexpr float BoxFont = 18, NameFont = 14, SmallFont = 12, KeyFont = 11.5f;
 constexpr double FadeMs = 120, SlideMs = 180, SlideDistance = 6;
 constexpr UINT InterimMs = 150, TrimDelayMs = 4000, DeferMs = 250; // a second letter usually comes within 250 ms
 constexpr size_t MaxIcons = 128, MaxQueryLength = 400;
+constexpr ULONG InstallTimeoutMs = 10 * 60 * 1000;
 
 App* g_app = nullptr;
 
@@ -144,7 +145,11 @@ int App::Run(int start)
     ChangeWindowMessageFilterEx(hwnd_, taskbarCreated_, MSGFLT_ALLOW, nullptr);
     hook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, OnWinEvent, 0, 0, WINEVENT_OUTOFCONTEXT);
     UpdateHotkeys();
-    if (Autostart::Initialize()) tray_.Notify(Lang::Get().welcomeTitle, Lang::Get().welcomeText);
+    evInstalled_ = Everything::IsInstalled();
+    // The first run's welcome; without Everything it says what Everything adds, and a click opens its settings card.
+    if (Autostart::Initialize())
+        Notify(Lang::Get().welcomeTitle, evInstalled_ ? Lang::Get().welcomeText : Lang::Get().welcomeEverything,
+               evInstalled_ ? Balloon::Search : Balloon::Everything);
     if (!Everything::IsRunning())
     {
         lastLaunch_ = NowMs();
@@ -244,6 +249,16 @@ void App::ShowSearch()
     editor_.caret = int(editor_.text.size());
     editor_.typing = false;
     boxScroll_ = 0;
+    // Installed or removed meanwhile: the notice and the Ctrl+E hint follow. A start that failed is tried again.
+    bool installed = Everything::IsInstalled();
+    if (installed != evInstalled_)
+    {
+        hints_.clear();
+        statusRendered_ = false;
+    }
+    evInstalled_ = installed;
+    if (installed) evInstallFailed_ = false;
+    evStartFailed_ = false;
     Everything::Boost(true);
     search_.Run(editor_.text, true);
     search_.PrepareIndex();
@@ -309,12 +324,12 @@ void App::HideSearch()
     SetTimer(hwnd_, TimerTrim, TrimDelayMs, nullptr);
 }
 
-void App::OpenSettings()
+void App::OpenSettings(bool everything)
 {
     HideSearch();
     KillTimer(hwnd_, TimerTrim);
     SetIdle(false);
-    settingsWindow_.Open(this);
+    settingsWindow_.Open(this, everything);
 }
 
 void App::SettingsClosed()
@@ -649,14 +664,33 @@ void App::ApplyView()
 
     std::vector<Row> rows;
     terms_ = Search::Terms(view.query);
+    // A notice goes where the rest-of-PC group is shown, under its title.
+    Notice notice = CurrentNotice();
+    auto position = [&](Tier tier)
+    {
+        for (int i = 0; i < 3; i++)
+            if (settings_.order[i] == uint8_t(tier)) return i;
+        return 3;
+    };
+    bool noticed = notice == Notice::None;
     for (const TierBlock& block : view.tiers)
     {
+        if (!noticed && position(block.tier) > position(Tier::Elsewhere))
+        {
+            AddNotice(rows, notice, true);
+            noticed = true;
+        }
         Row header;
         header.header = true;
         header.tier = block.tier;
         header.title = TierTitle(block.tier);
         if (block.tier != Tier::Recent) header.count = FormatCount(block.total);
         rows.push_back(std::move(header));
+        if (!noticed && block.tier == Tier::Elsewhere)
+        {
+            AddNotice(rows, notice, false);
+            noticed = true;
+        }
         for (const Result& result : block.items)
         {
             Row row;
@@ -671,12 +705,13 @@ void App::ApplyView()
             rows.push_back(std::move(row));
         }
     }
+    if (!noticed) AddNotice(rows, notice, true);
 
     // Revalidation usually brings the same answer: keep the rendered rows and only refresh the status.
     bool same = sameQuery && rows.size() == rows_.size();
     for (size_t i = 0; same && i < rows.size(); i++)
         same = rows[i].header == rows_[i].header && rows[i].count == rows_[i].count && rows[i].title == rows_[i].title &&
-               rows[i].result.path == rows_[i].result.path;
+               rows[i].result.path == rows_[i].result.path && rows[i].notice == rows_[i].notice && rows[i].display == rows_[i].display;
     if (!same)
     {
         rows_ = std::move(rows);
@@ -684,7 +719,8 @@ void App::ApplyView()
         selected_ = -1;
         for (size_t i = 0; i < rows_.size(); i++)
         {
-            if (rows_[i].header) continue;
+            // A notice is never selected for the user, so Enter can't start an install by surprise.
+            if (rows_[i].header || rows_[i].notice != Notice::None) continue;
             if (selected_ < 0) selected_ = int(i);
             if (!keep.empty() && rows_[i].result.path == keep)
             {
@@ -714,7 +750,7 @@ void App::UpdateStatus()
 {
     const SearchView& view = search_.View();
     const Lang& lang = Lang::Get();
-    if (view.everythingMissing) return; // EverythingMissing() said what is going on
+    if (view.everythingMissing && evStatus_) return; // EverythingMissing() said what is going on
     if (view.query.empty())
     {
         SetStatus(lang.idleHint);
@@ -752,29 +788,212 @@ void App::SetStatus(const std::wstring& text)
     }
 }
 
-// The desktop part is still shown; the rest follows by itself once Everything can answer.
+// The desktop part is still shown; the rest follows by itself once Everything can answer. When it can't (not installed,
+// or it didn't start), a notice row in the rest-of-PC group says so instead of the footer.
 void App::EverythingMissing()
 {
     const Lang& lang = Lang::Get();
+    // With the rest of the PC hidden, Everything is not the user's business: it is still started, silently.
+    bool say = settings_.show[size_t(Tier::Elsewhere)];
+    evStatus_ = false;
     if (Everything::IsRunning())
     {
-        SetStatus(lang.everythingLoading);
+        if (say) SetStatus(lang.everythingLoading);
     }
     else
     {
+        if (!evInstalled_ || evInstalling_ || evStartFailed_) return;
         if (NowMs() - lastLaunch_ > 10000)
         {
             lastLaunch_ = NowMs();
             if (!Everything::Launch(L"-startup"))
             {
-                SetStatus(lang.everythingMissing);
+                evInstalled_ = Everything::IsInstalled();
+                evStartFailed_ = evInstalled_;
                 return;
             }
         }
-        SetStatus(lang.everythingStarting);
+        if (say) SetStatus(lang.everythingStarting);
     }
+    evStatus_ = say;
     retries_ = 0;
     SetTimer(hwnd_, TimerEverything, 250, nullptr);
+}
+
+App::Notice App::CurrentNotice() const
+{
+    if (!settings_.show[size_t(Tier::Elsewhere)] || search_.View().query.empty()) return Notice::None;
+    if (evInstalling_) return Notice::Installing;
+    if (Everything::IsRunning()) return Notice::None;
+    if (!evInstalled_) return evInstallFailed_ || !Everything::CanInstall() ? Notice::Download : Notice::Install;
+    return evStartFailed_ ? Notice::Retry : Notice::None;
+}
+
+void App::AddNotice(std::vector<Row>& rows, Notice notice, bool header) const
+{
+    const Lang& lang = Lang::Get();
+    if (header)
+    {
+        Row title;
+        title.header = true;
+        title.tier = Tier::Elsewhere;
+        title.title = TierTitle(Tier::Elsewhere);
+        rows.push_back(std::move(title));
+    }
+    Row row;
+    row.tier = Tier::Elsewhere;
+    row.notice = notice;
+    switch (notice)
+    {
+    case Notice::Install:
+        row.display = lang.noticeInstall;
+        row.location = lang.noticeInstallDesc;
+        row.iconKey = L"\xE896"; // Download
+        break;
+    case Notice::Download:
+        row.display = evInstallFailed_ ? lang.noticeInstallFailed : lang.noticeInstall;
+        row.location = evInstallFailed_ ? lang.noticeInstallFailedDesc : lang.noticeDownloadDesc;
+        row.iconKey = L"\xE896";
+        break;
+    case Notice::Installing:
+        row.display = lang.noticeInstalling;
+        row.location = lang.noticeInstallingDesc;
+        row.iconKey = L"\xE895"; // Sync
+        break;
+    default:
+        row.display = lang.noticeNoStart;
+        row.location = lang.noticeNoStartDesc;
+        row.iconKey = L"\xE72C"; // Refresh
+        break;
+    }
+    rows.push_back(std::move(row));
+}
+
+void App::RunNotice(Notice notice)
+{
+    switch (notice)
+    {
+    case Notice::Install: InstallEverything(hwnd_); break;
+    case Notice::Download: OpenDownloadPage(); break;
+    case Notice::Retry:
+        evStartFailed_ = false;
+        lastLaunch_ = 0;
+        ApplyView(); // EverythingMissing() starts it again and says so
+        break;
+    default: break; // installing: the row only tells
+    }
+}
+
+void App::OpenDownloadPage()
+{
+    AllowSetForegroundWindow(ASFW_ANY);
+    ShellExecuteW(nullptr, L"open", Everything::DownloadUrl, nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+// winget behind one UAC prompt; without winget, or once it has failed, the download page instead.
+void App::InstallEverything(HWND owner)
+{
+    if (evInstalling_) return;
+    if (Everything::IsInstalled())
+    {
+        evInstalled_ = true;
+        EverythingChanged();
+        return;
+    }
+    if (evInstallFailed_ || !Everything::CanInstall())
+    {
+        OpenDownloadPage();
+        return;
+    }
+    const Lang& lang = Lang::Get();
+    HANDLE process = nullptr;
+    switch (Everything::Install(owner, process))
+    {
+    case EvSetup::Started:
+        if (RegisterWaitForSingleObject(&installWait_, process, OnInstallExit, hwnd_, InstallTimeoutMs, WT_EXECUTEONLYONCE))
+        {
+            installProcess_ = process;
+            evInstalling_ = true;
+            // The UAC prompt can take the search box away: then a notification says the news will come.
+            if (!visible_ && !settingsWindow_.IsOpen()) Notify(lang.installingTitle, lang.installingText, Balloon::Search);
+            break;
+        }
+        CloseHandle(process);
+        evInstallFailed_ = true;
+        break;
+    case EvSetup::NoWinget: OpenDownloadPage(); return;
+    case EvSetup::Cancelled: return; // asked, and the answer was no
+    case EvSetup::Failed: evInstallFailed_ = true; break;
+    }
+    EverythingChanged();
+}
+
+void CALLBACK App::OnInstallExit(void* context, BOOLEAN) { PostMessageW(static_cast<HWND>(context), WM_APP_SETUP, 0, 0); }
+
+// winget's exit code is not trusted either way ("already installed" is an error): what counts is whether Everything is there now.
+void App::InstallDone()
+{
+    if (installWait_) UnregisterWait(installWait_);
+    if (installProcess_) CloseHandle(installProcess_);
+    installWait_ = installProcess_ = nullptr;
+    evInstalling_ = false;
+    evInstalled_ = Everything::IsInstalled();
+    evInstallFailed_ = !evInstalled_;
+    const Lang& lang = Lang::Get();
+    if (evInstalled_)
+    {
+        evStartFailed_ = false;
+        if (!Everything::IsRunning())
+        {
+            lastLaunch_ = NowMs();
+            Everything::Launch(L"-startup");
+        }
+        retries_ = 0;
+        SetTimer(hwnd_, TimerEverything, 250, nullptr);
+        if (!visible_) Notify(lang.installedTitle, lang.installedText, Balloon::Search);
+    }
+    else if (!visible_)
+    {
+        Notify(lang.installFailedTitle, lang.installFailedText, Balloon::Download);
+    }
+    EverythingChanged();
+}
+
+// Installed, installing or failed: the notice row, the Ctrl+E hint and the settings card follow.
+void App::EverythingChanged()
+{
+    hints_.clear();
+    statusRendered_ = false;
+    if (visible_)
+    {
+        ApplyView();
+        RECT footer = FooterRect();
+        InvalidateRect(hwnd_, &footer, FALSE);
+    }
+    settingsWindow_.EverythingChanged();
+}
+
+EvStatus App::EverythingStatus() const
+{
+    if (evInstalling_) return EvStatus::Installing;
+    if (Everything::IsRunning()) return EvStatus::Running;
+    return Everything::IsInstalled() ? EvStatus::Stopped : EvStatus::Missing;
+}
+
+void App::StartEverything()
+{
+    evStartFailed_ = false;
+    lastLaunch_ = NowMs();
+    if (!Everything::Launch(L"-startup")) return;
+    retries_ = 0;
+    SetTimer(hwnd_, TimerEverything, 250, nullptr);
+}
+
+void App::Notify(const wchar_t* title, const wchar_t* text, Balloon click)
+{
+    if (!settings_.trayIcon) return; // no icon, no notifications
+    balloon_ = click;
+    tray_.Notify(title, text);
 }
 
 // ---------------------------------------------------------------- painting
@@ -881,6 +1100,7 @@ void App::RenderRow(Row& row, int width)
         row.second = text_.Render(row.count, minor);
         return;
     }
+    if (row.notice != Notice::None) row.third = text_.Render(row.iconKey, {Font::Icons, 20 * scale_, false, Ink::Accent});
     float kind = 0;
     if (!row.kind.empty())
     {
@@ -960,7 +1180,10 @@ void App::DrawList()
             canvas_.FillRoundRect(float(x0), middle - 9 * scale_, float(x0) + 3 * scale_, middle + 9 * scale_, 1.5f * scale_, theme_.accentFill);
         }
         int iconSize = D(IconSize);
-        if (const IconEntry* icon = IconFor(row); icon && !icon->pixels.empty())
+        if (row.notice != Notice::None)
+            canvas_.DrawText(row.third, x0 + D(IconLeft) + (iconSize - int(std::lround(row.third.width))) / 2,
+                             rowTop + (rowBottom - rowTop - int(std::lround(row.third.height))) / 2, palette);
+        else if (const IconEntry* icon = IconFor(row); icon && !icon->pixels.empty())
             canvas_.DrawImage(icon->pixels.data(), icon->size, icon->size, x0 + D(IconLeft), rowTop + (rowBottom - rowTop - iconSize) / 2);
 
         int textX = x0 + D(TextLeft);
@@ -985,14 +1208,16 @@ void App::RenderFooter()
     if (hints_.empty() && settings_.keyHints)
     {
         const Lang& lang = Lang::Get();
-        const wchar_t* pairs[][2] = {{L"↵", lang.hintOpen}, {L"Ctrl ↵", lang.hintReveal}, {L"Ctrl E", L"Everything"}, {L"Esc", lang.hintClose}};
+        std::vector<std::pair<const wchar_t*, const wchar_t*>> pairs = {{L"↵", lang.hintOpen}, {L"Ctrl ↵", lang.hintReveal}};
+        if (evInstalled_) pairs.emplace_back(L"Ctrl E", L"Everything");
+        pairs.emplace_back(L"Esc", lang.hintClose);
         TextStyle style{Font::Ui, KeyFont * scale_, false, Ink::Tertiary};
         hintsWidth_ = 0;
-        for (size_t i = 0; i < ARRAYSIZE(pairs); i++)
+        for (size_t i = 0; i < pairs.size(); i++)
         {
-            Hint hint{text_.Render(pairs[i][0], style), text_.Render(pairs[i][1], style)};
+            Hint hint{text_.Render(pairs[i].first, style), text_.Render(pairs[i].second, style)};
             hintsWidth_ += D(5) * 2 + 2 * Line() + int(std::ceil(hint.key.width)) + D(6) + int(std::ceil(hint.label.width));
-            if (i + 1 < ARRAYSIZE(pairs)) hintsWidth_ += D(14);
+            if (i + 1 < pairs.size()) hintsWidth_ += D(14);
             hints_.push_back(std::move(hint));
         }
     }
@@ -1341,6 +1566,11 @@ void App::Reveal(const Result item)
 
 void App::OpenInEverything()
 {
+    if (!evInstalled_)
+    {
+        SetStatus(Lang::Get().everythingMissing);
+        return;
+    }
     std::wstring query;
     for (wchar_t c : editor_.text)
     {
@@ -1369,7 +1599,8 @@ bool App::OnKeyDown(WPARAM key)
     case VK_RETURN:
         if (Row* row = Selected())
         {
-            if (ctrl) Reveal(row->result);
+            if (row->notice != Notice::None) RunNotice(row->notice);
+            else if (ctrl) Reveal(row->result);
             else Open(row->result);
         }
         return true;
@@ -1423,7 +1654,7 @@ bool App::OnKeyDown(WPARAM key)
     case 'C':
         if (shift)
         {
-            if (Row* row = Selected())
+            if (Row* row = Selected(); row && row->notice == Notice::None)
                 if (ShellOps::CopyText(hwnd_, row->result.path)) SetStatus(Lang::Get().pathCopied);
         }
         else
@@ -1540,7 +1771,8 @@ void App::OnMouseUp(int x, int y)
     int row = RowAt(x, y);
     if (row < 0 || row != pressed_) return;
     pressed_ = -1;
-    if (Pressed(VK_CONTROL)) Reveal(rows_[row].result);
+    if (rows_[row].notice != Notice::None) RunNotice(rows_[row].notice);
+    else if (Pressed(VK_CONTROL)) Reveal(rows_[row].result);
     else Open(rows_[row].result);
 }
 
@@ -1698,6 +1930,7 @@ LRESULT App::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
             search_.SendDeferred();
             break;
         case TimerEverything:
+            settingsWindow_.EverythingChanged(); // its card shows "running" as soon as it is, before its database is loaded
             if (Everything::IsReady())
             {
                 KillTimer(hwnd_, TimerEverything);
@@ -1709,10 +1942,15 @@ LRESULT App::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
                     ApplyView();
                 }
             }
+            else if (Everything::IsRunning())
+            {
+                retries_ = 0; // loading its database, which takes a while the first time
+            }
             else if (++retries_ > 120)
             {
                 KillTimer(hwnd_, TimerEverything);
-                SetStatus(Lang::Get().everythingNoStart);
+                evStartFailed_ = true;
+                if (visible_) ApplyView();
             }
             break;
         }
@@ -1789,8 +2027,12 @@ LRESULT App::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
         switch (LOWORD(lParam))
         {
         case NIN_SELECT:
-        case NIN_KEYSELECT:
-        case NIN_BALLOONUSERCLICK: ShowSearch(); break;
+        case NIN_KEYSELECT: ShowSearch(); break;
+        case NIN_BALLOONUSERCLICK:
+            if (balloon_ == Balloon::Everything) OpenSettings(true);
+            else if (balloon_ == Balloon::Download) OpenDownloadPage();
+            else ShowSearch();
+            break;
         case WM_CONTEXTMENU:
         {
             POINT at{GET_X_LPARAM(wParam), GET_Y_LPARAM(wParam)};
@@ -1813,6 +2055,7 @@ LRESULT App::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_APP_SHOW: ShowSearch(); return 0;
     case WM_APP_QUIT: Exit(); return 0;
     case WM_APP_SETTINGS: OpenSettings(); return 0;
+    case WM_APP_SETUP: InstallDone(); return 0;
     case WM_IME_STARTCOMPOSITION: UpdateImePosition(); break;
     case WM_CLOSE: Dismiss(); return 0; // Alt+F4 only hides; the app lives in the tray
     case WM_DESTROY: PostQuitMessage(0); return 0;

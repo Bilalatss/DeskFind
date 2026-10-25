@@ -48,6 +48,22 @@
             Say 'Checksum OK.'
         }
 
+        # DeskFind searches the rest of the PC through Everything (voidtools); without it the desktop and its folders are
+        # still searched. Asked before DeskFind starts, so its first run already finds Everything.
+        $everything = (Get-Process Everything, Everything64 -ErrorAction SilentlyContinue) -or
+            (Test-Path "$env:ProgramFiles\Everything\Everything.exe") -or (Test-Path "${env:ProgramFiles(x86)}\Everything\Everything.exe")
+        if (-not $everything) {
+            Say 'DeskFind searches the rest of the PC through Everything by voidtools (free).' Yellow
+            if (Get-Command winget -ErrorAction SilentlyContinue) {
+                $answer = Read-Host '  Install Everything now with winget? [Y/n]'
+                if ($answer -notmatch '^\s*n') {
+                    winget install --id voidtools.Everything --exact --source winget --accept-source-agreements --accept-package-agreements
+                }
+            } else {
+                Say 'Get it from https://www.voidtools.com/downloads/ (DeskFind also offers it later).' Yellow
+            }
+        }
+
         # Only the installer is waited for; it hands the running app over to Explorer.
         $process = Start-Process $file -ArgumentList '--install' -PassThru
         $null = $process.Handle # keeps the exit code readable after the process ends
@@ -61,22 +77,6 @@
         }
     } finally {
         Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    # DeskFind searches through Everything (voidtools); without it only the desktop itself is searched.
-    $everything = (Get-Process Everything, Everything64 -ErrorAction SilentlyContinue) -or
-        (Test-Path "$env:ProgramFiles\Everything\Everything.exe") -or (Test-Path "${env:ProgramFiles(x86)}\Everything\Everything.exe")
-    if (-not $everything) {
-        Write-Host ''
-        Say 'DeskFind needs Everything by voidtools to search beyond the desktop.' Yellow
-        if (Get-Command winget -ErrorAction SilentlyContinue) {
-            $answer = Read-Host '  Install Everything now with winget? [Y/n]'
-            if ($answer -notmatch '^\s*n') {
-                winget install --id voidtools.Everything --exact --accept-source-agreements --accept-package-agreements
-            }
-        } else {
-            Say 'Get it from https://www.voidtools.com/downloads/' Yellow
-        }
     }
     Write-Host ''
 }

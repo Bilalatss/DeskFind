@@ -92,11 +92,16 @@ std::wstring FormatDate(int64_t unixSeconds)
 
 // ---------------------------------------------------------------- lifetime
 
-void SettingsWindow::Open(SettingsHost* host)
+void SettingsWindow::Open(SettingsHost* host, bool everything)
 {
     if (hwnd_)
     {
         if (IsIconic(hwnd_)) ShowWindow(hwnd_, SW_RESTORE);
+        if (everything)
+        {
+            Navigate(Page::Search);
+            ScrollTo(MaxScroll()); // its card is the last one
+        }
         SetForegroundWindow(hwnd_);
         return;
     }
@@ -137,7 +142,7 @@ void SettingsWindow::Open(SettingsHost* host)
     int height = std::min(int(740 * s), int((work.bottom - work.top) * 0.92f));
     int x = work.left + (work.right - work.left - width) / 2, y = work.top + (work.bottom - work.top - height) / 2;
 
-    page_ = Page::General;
+    page_ = everything ? Page::Search : Page::General;
     scroll_ = 0;
     focus_ = -1;
     hwnd_ = CreateWindowExW(0, WindowClass, Lang::Get().settingsTitle, WS_OVERLAPPEDWINDOW, x, y, width, height, nullptr, nullptr, instance, this);
@@ -146,6 +151,7 @@ void SettingsWindow::Open(SettingsHost* host)
     scale_ = float(dpi_) / 96.0f;
     LoadColors();
     Rebuild();
+    if (everything) scroll_ = MaxScroll();
     ShowWindow(hwnd_, SW_SHOW);
     SetForegroundWindow(hwnd_);
 }
@@ -153,6 +159,12 @@ void SettingsWindow::Open(SettingsHost* host)
 void SettingsWindow::Close()
 {
     if (hwnd_) DestroyWindow(hwnd_);
+}
+
+// Not under an open drop-down or a shortcut being typed: those keep their targets until they close.
+void SettingsWindow::EverythingChanged()
+{
+    if (hwnd_ && page_ == Page::Search && !popup_ && !recording_.Valid() && host_->EverythingStatus() != shownStatus_) Rebuild();
 }
 
 void SettingsWindow::Refresh()
@@ -446,6 +458,30 @@ void SettingsWindow::BuildSearch()
     AddSection(lang.secRanking);
     AddToggle(AddCard(L"\xE734", lang.boostTitle, lang.boostDesc), Act::BoostOpened, s.boostOpened);
     AddToggle(AddCard(L"\xE81C", lang.recentTitle, lang.recentDesc), Act::RecentWhenEmpty, s.recentWhenEmpty);
+
+    // The rest of the PC is searched through Everything: what it is doing, and a button when something is to be done.
+    AddSection(lang.secEverything);
+    EvStatus status = host_->EverythingStatus();
+    shownStatus_ = status;
+    std::wstring state;
+    if (status == EvStatus::Running)
+    {
+        // An elevated Everything doesn't answer the version question (UIPI), yet it runs and searches.
+        std::wstring version = Everything::Version();
+        state = version.empty() ? std::wstring(lang.everythingRunningPlain) : Format(lang.everythingRunning, version);
+    }
+    else
+    {
+        state = status == EvStatus::Stopped ? lang.everythingStopped : status == EvStatus::Missing ? lang.everythingNotInstalled : lang.everythingInstalling;
+    }
+    Item& card = AddCard(L"\xE721", lang.everythingState, state);
+    if (status == EvStatus::Missing)
+    {
+        Control& install = AddControl(card, Control::Type::Button, Act::EverythingInstall);
+        install.text = Everything::CanInstall() ? lang.installButton : lang.downloadButton;
+        install.accent = true;
+    }
+    if (status == EvStatus::Stopped) AddButton(card, Act::EverythingStart, lang.startButton);
 }
 
 void SettingsWindow::BuildAppearance()
@@ -512,12 +548,6 @@ void SettingsWindow::BuildStats()
     }
 
     AddSection(lang.secEverything);
-    std::wstring version = Everything::Version();
-    // An elevated Everything doesn't answer the version question (UIPI), yet it runs and searches.
-    std::wstring state = !version.empty()            ? Format(lang.everythingRunning, version)
-                         : Everything::IsRunning() ? std::wstring(lang.everythingRunningPlain)
-                                                   : std::wstring(lang.everythingStopped);
-    AddCard(L"\xE721", lang.everythingState, state);
     size_t entries = host_->IndexEntries();
     std::wstring index = lang.indexIdle;
     if (entries)
@@ -1294,6 +1324,14 @@ void SettingsWindow::Act_(Act act, int arg, int option)
     case Act::OpenDataFolder: ShellExecuteW(hwnd_, L"open", LocalDataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL); return;
     case Act::OpenUrl:
         if (arg >= 0 && arg < int(std::size(Urls))) ShellExecuteW(hwnd_, L"open", Urls[arg], nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    case Act::EverythingInstall:
+        host_->InstallEverything(hwnd_);
+        Rebuild();
+        return;
+    case Act::EverythingStart:
+        host_->StartEverything();
+        Rebuild();
         return;
     default: return;
     }

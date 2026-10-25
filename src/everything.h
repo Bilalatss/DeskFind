@@ -36,6 +36,23 @@ struct EvReply
     std::unique_ptr<uint8_t[]> data;
 };
 
+// What the settings window shows about Everything.
+enum class EvStatus : uint8_t
+{
+    Running,
+    Stopped,
+    Missing,
+    Installing,
+};
+
+enum class EvSetup : uint8_t
+{
+    Started,   // winget runs; its process comes back
+    NoWinget,
+    Cancelled, // the UAC prompt was declined
+    Failed,
+};
+
 // Queries run one at a time on a worker thread, so a slow or hung Everything never blocks the UI.
 // Replies are posted to the notify window as WM_APP_EVERYTHING; queries from an older generation are dropped unsent.
 class Everything
@@ -50,8 +67,12 @@ public:
     static bool IsRunning() { return Window() != nullptr; }
     static bool IsReady(); // running and its database loaded (asks Everything, at most ~150 ms)
     static std::wstring ExePath();
+    static bool IsInstalled() { return IsRunning() || !ExePath().empty(); }
     static std::wstring Version(); // "1.4.1.1032", empty when it doesn't answer
     static bool Launch(const std::wstring& args);
+    static bool CanInstall(); // winget is there
+    static EvSetup Install(HWND owner, HANDLE& process);
+    static constexpr wchar_t DownloadUrl[] = L"https://www.voidtools.com/downloads/";
     static void Boost(bool on); // full CPU speed for Everything while the search box is open
 
 private:

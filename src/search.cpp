@@ -10,7 +10,7 @@ namespace
 // Everything is asked for more than a group shows, so the name ranking has something to choose from.
 constexpr size_t ShowRecent = 8;
 constexpr uint32_t GlobalFetch = 1000, TreeFetch = 500, DirectFetch = 300, IndexFetch = 400000;
-constexpr uint64_t FreshMs = 3000, DesktopListMs = 1500;
+constexpr uint64_t FreshMs = 3000, DesktopListMs = 1500, WalkMs = 8000;
 constexpr size_t CacheEntries = 48, CacheBytes = 1536 * 1024;
 
 enum : uint32_t
@@ -128,6 +128,150 @@ std::wstring ShortenPath(std::wstring_view path, size_t max)
     }
     return out;
 }
+
+// What Explorer shows: hidden files only if it is set to show them, unless the setting (`mode`) says otherwise.
+void HiddenRule(int mode, DWORD& hidden, DWORD& superHidden)
+{
+    hidden = 2;
+    superHidden = 0;
+    if (mode == 0)
+    {
+        DWORD size = sizeof(DWORD);
+        RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"Hidden", RRF_RT_REG_DWORD, nullptr, &hidden, &size);
+        size = sizeof(DWORD);
+        RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"ShowSuperHidden", RRF_RT_REG_DWORD, nullptr, &superHidden, &size);
+    }
+    else
+    {
+        hidden = superHidden = mode == 1 ? 1 : 0;
+    }
+}
+
+bool IsHiddenItem(DWORD attributes, DWORD hidden, DWORD superHidden)
+{
+    bool isHidden = (attributes & FILE_ATTRIBUTE_HIDDEN) != 0;
+    bool isSystem = (attributes & FILE_ATTRIBUTE_SYSTEM) != 0;
+    return (isHidden && isSystem && superHidden != 1) || (isHidden && hidden != 1);
+}
+
+bool IsNoiseDir(std::wstring_view dir, bool hideDev, const std::vector<std::wstring>& excluded)
+{
+    for (std::wstring_view segment : HiddenSegments)
+        if (HasSegment(dir, segment)) return true;
+    if (hideDev)
+        for (std::wstring_view segment : NoiseSegments)
+            if (HasSegment(dir, segment)) return true;
+    for (const std::wstring& folder : excluded)
+        if (HasPrefixDir(dir, folder)) return true;
+    return false;
+}
+
+struct WalkJob
+{
+    HWND notify;
+    std::vector<std::wstring> roots; // the desktops and the extra folders
+    std::vector<std::wstring> excluded;
+    bool hideDev;
+    DWORD hidden, superHidden;
+};
+
+// The desktop tree read from disk, answered the way Everything answers the index query: newest first, the roots' own
+// entries and noise left out, posted to the window as a TagIndex reply. More than IndexFetch entries, or more than
+// WalkMs of walking, is answered as too big.
+DWORD WINAPI WalkMain(void* param)
+{
+    std::unique_ptr<WalkJob> job(static_cast<WalkJob*>(param));
+    struct Found
+    {
+        uint32_t dir, name;
+        uint16_t length;
+        bool folder;
+        uint64_t written;
+    };
+    std::vector<std::wstring> dirs = job->roots;
+    std::vector<uint32_t> stack;
+    for (uint32_t i = uint32_t(dirs.size()); i-- > 0;) stack.push_back(i);
+    std::vector<wchar_t> names;
+    std::vector<Found> found;
+    const std::vector<std::wstring> none;
+    uint64_t started = NowMs();
+    bool cut = false;
+    while (!stack.empty() && !cut)
+    {
+        uint32_t dir = stack.back();
+        stack.pop_back();
+        bool root = dir < job->roots.size();
+        WIN32_FIND_DATAW data;
+        HANDLE find = FindFirstFileExW((dirs[dir] + L"\\*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+        if (find == INVALID_HANDLE_VALUE) continue;
+        do
+        {
+            std::wstring_view name = data.cFileName;
+            if (name == L"." || name == L"..") continue;
+            DWORD attributes = data.dwFileAttributes;
+            if (IsHiddenItem(attributes, job->hidden, job->superHidden)) continue;
+            if (EqualsNoCase(name, L"desktop.ini") || EqualsNoCase(name, L"thumbs.db")) continue;
+            bool folder = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            if (folder)
+            {
+                std::wstring path = dirs[dir] + L"\\" + std::wstring(name);
+                if (IsNoiseDir(path, false, job->excluded)) continue; // excluded and system folders go with all they hold
+                // Dev folders are listed but not their contents, as in the Everything query. Links to elsewhere are
+                // not followed, and a nested extra folder is walked as a root of its own.
+                bool link = (attributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+                            (data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT || data.dwReserved0 == IO_REPARSE_TAG_SYMLINK);
+                bool nested = std::any_of(job->roots.begin(), job->roots.end(), [&](const std::wstring& r) { return EqualsNoCase(r, path); });
+                if (!link && !nested && !(job->hideDev && IsNoiseDir(path, true, none)))
+                {
+                    stack.push_back(uint32_t(dirs.size()));
+                    dirs.push_back(std::move(path));
+                }
+            }
+            if (root) continue; // the desktop itself comes from the local listing
+            if (found.size() >= IndexFetch || name.size() > 0xFFFF)
+            {
+                cut = true;
+                break;
+            }
+            uint64_t written = (uint64_t(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+            found.push_back(Found{dir, uint32_t(names.size()), uint16_t(name.size()), folder, written});
+            names.insert(names.end(), name.begin(), name.end());
+        } while (FindNextFileW(find, &data));
+        FindClose(find);
+        if (NowMs() - started > WalkMs) cut = true;
+    }
+    std::stable_sort(found.begin(), found.end(), [](const Found& a, const Found& b) { return a.written > b.written; });
+
+    // One block of null-terminated strings, as Everything's reply has: every folder path once, then the names.
+    size_t chars = names.size() + found.size();
+    for (const std::wstring& d : dirs) chars += d.size() + 1;
+    auto reply = std::make_unique<EvReply>();
+    reply->tag = TagIndex;
+    reply->generation = Always;
+    reply->ok = true;
+    reply->total = uint32_t(found.size()) + (cut ? 1 : 0);
+    reply->data.reset(new uint8_t[std::max<size_t>(chars, 1) * sizeof(wchar_t)]);
+    wchar_t* out = reinterpret_cast<wchar_t*>(reply->data.get());
+    std::vector<const wchar_t*> dirText(dirs.size());
+    for (size_t i = 0; i < dirs.size(); i++)
+    {
+        dirText[i] = out;
+        memcpy(out, dirs[i].data(), dirs[i].size() * sizeof(wchar_t));
+        out += dirs[i].size();
+        *out++ = 0;
+    }
+    reply->items.reserve(found.size());
+    for (const Found& f : found)
+    {
+        reply->items.push_back(EvItem{out, dirText[f.dir], f.length, uint32_t(dirs[f.dir].size()), f.folder ? EvFolder : 0u});
+        memcpy(out, names.data() + f.name, size_t(f.length) * sizeof(wchar_t));
+        out += f.length;
+        *out++ = 0;
+    }
+    EvReply* raw = reply.release();
+    if (!PostMessageW(job->notify, WM_APP_EVERYTHING, 0, reinterpret_cast<LPARAM>(raw))) delete raw;
+    return 0;
+}
 } // namespace
 
 size_t Search::CacheEntry::Bytes() const
@@ -167,6 +311,7 @@ void Search::Init(HWND notify)
     programDirs_[1] = KnownFolder(FOLDERID_ProgramFilesX86);
 
     history_.Load();
+    notify_ = notify;
     everything_.Start(notify);
 }
 
@@ -285,17 +430,7 @@ bool Search::IsDesktopRoot(std::wstring_view dir) const
 
 bool Search::IsOnDesktop(std::wstring_view dir) const { return IsDesktopRoot(dir); }
 
-bool Search::IsNoise(std::wstring_view dir) const
-{
-    for (std::wstring_view segment : HiddenSegments)
-        if (HasSegment(dir, segment)) return true;
-    if (options_.hideDevFolders)
-        for (std::wstring_view segment : NoiseSegments)
-            if (HasSegment(dir, segment)) return true;
-    for (const std::wstring& excluded : options_.excludedFolders)
-        if (HasPrefixDir(dir, excluded)) return true;
-    return false;
-}
+bool Search::IsNoise(std::wstring_view dir) const { return IsNoiseDir(dir, options_.hideDevFolders, options_.excludedFolders); }
 
 // Windows itself, temp files, and Recent: shortcuts Windows makes to every opened file, copies of real ones.
 bool Search::IsSystem(std::wstring_view dir) const
@@ -343,18 +478,8 @@ void Search::RefreshDesktop(bool force)
     desktopTime_ = NowMs();
     desktopItems_.clear();
 
-    // By default what Explorer shows on the desktop: hidden files only if Explorer is set to show them.
-    DWORD hidden = 2, superHidden = 0, size = sizeof(DWORD);
-    if (options_.hiddenFiles == 0)
-    {
-        RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"Hidden", RRF_RT_REG_DWORD, nullptr, &hidden, &size);
-        size = sizeof(DWORD);
-        RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"ShowSuperHidden", RRF_RT_REG_DWORD, nullptr, &superHidden, &size);
-    }
-    else
-    {
-        hidden = superHidden = options_.hiddenFiles == 1 ? 1 : 0;
-    }
+    DWORD hidden, superHidden;
+    HiddenRule(options_.hiddenFiles, hidden, superHidden);
 
     struct Found
     {
@@ -374,10 +499,7 @@ void Search::RefreshDesktop(bool force)
             std::wstring_view name = data.cFileName;
             if (name == L"." || name == L"..") continue;
             DWORD attributes = data.dwFileAttributes;
-            bool isHidden = (attributes & FILE_ATTRIBUTE_HIDDEN) != 0;
-            bool isSystem = (attributes & FILE_ATTRIBUTE_SYSTEM) != 0;
-            if (isHidden && isSystem && superHidden != 1) continue;
-            if (isHidden && hidden != 1) continue;
+            if (IsHiddenItem(attributes, hidden, superHidden)) continue;
             if (EqualsNoCase(name, L"desktop.ini") || EqualsNoCase(name, L"thumbs.db")) continue;
             Found f;
             f.candidate.path = desktop + L"\\" + std::wstring(name);
@@ -610,7 +732,7 @@ size_t Search::IndexBytes() const
            index_.names.capacity() * sizeof(wchar_t);
 }
 
-void Search::PrepareIndex()
+void Search::PrepareIndex(bool fromDisk)
 {
     if (index_.ready || indexTooBig_) return;
     if (indexInFlight_)
@@ -620,11 +742,30 @@ void Search::PrepareIndex()
         else indexWanted_ = true;
         return;
     }
-    if (!Everything::IsRunning()) return;
-    indexInFlight_ = true;
     indexDiscard_ = indexWanted_ = false;
     indexSentEpoch_ = indexEpoch_;
+    if (fromDisk || !Everything::IsRunning())
+    {
+        indexInFlight_ = WalkIndex();
+        return;
+    }
+    indexInFlight_ = true;
     everything_.Query(Always, TagIndex, IndexQuery(), IndexFetch, EvSortDateModifiedDesc);
+}
+
+// Slower than asking Everything, but the desktop folders are searched without it all the same.
+bool Search::WalkIndex()
+{
+    auto* job = new WalkJob{notify_, desktops_, options_.excludedFolders, options_.hideDevFolders, 0, 0};
+    HiddenRule(options_.hiddenFiles, job->hidden, job->superHidden);
+    HANDLE thread = CreateThread(nullptr, 0, WalkMain, job, 0, nullptr);
+    if (!thread)
+    {
+        delete job;
+        return false;
+    }
+    CloseHandle(thread);
+    return true;
 }
 
 void Search::BuildIndex(const EvReply& reply)
@@ -989,9 +1130,15 @@ bool Search::OnReply(EvReply* raw)
             return false;
         }
         // Hidden and trimmed meanwhile: the answer is not wanted any more.
-        if (!reply->ok || indexDiscard_)
+        if (indexDiscard_)
         {
             indexDiscard_ = false;
+            return false;
+        }
+        // Everything is still loading its database, or went away: the tree is read from disk instead.
+        if (!reply->ok)
+        {
+            indexInFlight_ = WalkIndex();
             return false;
         }
         if (reply->total > reply->items.size())
@@ -1012,6 +1159,7 @@ bool Search::OnReply(EvReply* raw)
             return true;
         }
         if (CacheEntry* hit = FindCached(view_.query)) Compose(*hit, query);
+        else if (view_.everythingMissing) ComposeLocal(query); // nothing else is coming
         return true;
     }
     if (reply->generation != pending_.generation || !view_.pending) return false;

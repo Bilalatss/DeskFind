@@ -81,7 +81,8 @@ public:
     void Retry() { Run(lastQuery_, true); }
     void SendDeferred(); // the wait for a second letter is over
     // Fetches the whole desktop tree once, so the desktop folders tier is answered locally while the box is open.
-    void PrepareIndex();
+    // Everything gives it; without Everything (or with `fromDisk`) it is read from disk on a worker thread.
+    void PrepareIndex(bool fromDisk = false);
     bool IndexReady() const { return index_.ready; }
     size_t IndexBytes() const;
     size_t IndexEntries() const { return index_.ready ? index_.entries.size() : 0; }
@@ -177,6 +178,7 @@ private:
     std::vector<Result> LocalDesktop(const Query& query, uint32_t& total) const;
     std::vector<Result> LocalTree(const Query& query, uint32_t& total) const;
     void BuildIndex(const EvReply& reply);
+    bool WalkIndex(); // false if the worker didn't start
     std::wstring IndexQuery() const;
     bool UseIndex(const Query& query) const { return query.plain && index_.ready; }
     uint8_t ScoreName(std::wstring_view display, bool folder, const Query& query) const;
@@ -208,6 +210,7 @@ private:
     std::wstring DirectQuery(const std::wstring& text) const;
 
     Everything everything_;
+    HWND notify_ = nullptr;
     History history_;
     SearchView view_;
     Pending pending_;
