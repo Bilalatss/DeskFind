@@ -1,0 +1,51 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # the release step uploads assets
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        shell: cmd
+        run: build.cmd
+
+      - name: Check the tag matches src/version.h
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path src/version.h -Pattern '#define DESKFIND_VERSION "(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne $env:GITHUB_REF_NAME) { throw "Tag $env:GITHUB_REF_NAME does not match $version in src/version.h" }
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash bin/DeskFind.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  DeskFind.exe" | Set-Content bin/SHA256SUMS.txt -Encoding ascii
+          Get-Content bin/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeskFind
+          path: |
+            bin/DeskFind.exe
+            bin/SHA256SUMS.txt
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bin/DeskFind.exe
+            bin/SHA256SUMS.txt
+          generate_release_notes: true

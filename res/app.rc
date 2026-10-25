@@ -1,0 +1,36 @@
+#include <winres.h>
+#include "../src/version.h"
+
+#pragma code_page(65001)
+
+1 RT_MANIFEST "app.manifest"
+1 ICON "app.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION DESKFIND_VERSION_MAJOR, DESKFIND_VERSION_MINOR, DESKFIND_VERSION_PATCH, 0
+PRODUCTVERSION DESKFIND_VERSION_MAJOR, DESKFIND_VERSION_MINOR, DESKFIND_VERSION_PATCH, 0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", DESKFIND_PUBLISHER
+            VALUE "FileDescription", "DeskFind"
+            VALUE "FileVersion", DESKFIND_VERSION
+            VALUE "InternalName", "DeskFind"
+            VALUE "LegalCopyright", "MIT License"
+            VALUE "OriginalFilename", "DeskFind.exe"
+            VALUE "ProductName", "DeskFind"
+            VALUE "ProductVersion", DESKFIND_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
