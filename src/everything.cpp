@@ -19,10 +19,11 @@ uint32_t U32(const uint8_t* p)
     memcpy(&v, p, 4);
     return v;
 }
+} // namespace
 
 // EVERYTHING_IPC_LIST2 { totitems, numitems, offset, request_flags, sort_type } + ITEM2[numitems] { flags, data_offset }.
 // At data_offset each requested field follows in flag order: DWORD length in chars, the text, a null terminator.
-bool Parse(EvReply& reply, size_t size)
+bool ParseReply(EvReply& reply, size_t size)
 {
     const uint8_t* data = reply.data.get();
     if (size < 20) return false;
@@ -61,6 +62,8 @@ bool Parse(EvReply& reply, size_t size)
     return true;
 }
 
+namespace
+{
 // The App Installer alias first: a winget.exe found through the search path could be anyone's.
 std::wstring WingetPath()
 {
@@ -203,6 +206,7 @@ bool Everything::Start(HWND notify)
 {
     notify_ = notify;
     ready_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ready_) return false;
     thread_ = CreateThread(nullptr, 64 * 1024, ThreadMain, this, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
     if (!thread_) return false;
     WaitForSingleObject(ready_, 5000);
@@ -282,7 +286,7 @@ LRESULT Everything::Handle(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         // Copied: let Everything go on while this thread parses.
         ReplyMessage(TRUE);
-        if (reply->data) reply->ok = Parse(*reply, cds->cbData);
+        if (reply->data) reply->ok = ParseReply(*reply, cds->cbData);
         if (!reply->ok) reply->items.clear();
         Finish(reply);
         return TRUE;

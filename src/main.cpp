@@ -8,7 +8,7 @@
 int RunSelfTest(int argc, wchar_t** argv);
 int RunApp(int start); // 0 in the background, 1 with the search box open, 2 with the settings open
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
+int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int)
 {
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -16,17 +16,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     const wchar_t* command = argc >= 2 ? argv[1] : L"";
     if (wcscmp(command, L"--selftest") == 0)
     {
-        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        (void)CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         code = RunSelfTest(argc - 1, argv + 1);
     }
     else if (wcscmp(command, L"--install") == 0)
     {
-        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        (void)CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         code = Setup::Install();
     }
     else if (wcscmp(command, L"--uninstall") == 0)
     {
-        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        (void)CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         code = Setup::Uninstall(argc >= 3 && wcscmp(argv[2], L"--quiet") == 0);
     }
     else

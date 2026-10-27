@@ -145,9 +145,12 @@ bool ShellOps::CopyText(HWND owner, const std::wstring& text)
     bool ok = false;
     if (memory)
     {
-        memcpy(GlobalLock(memory), text.c_str(), bytes);
-        GlobalUnlock(memory);
-        ok = SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
+        if (void* locked = GlobalLock(memory))
+        {
+            memcpy(locked, text.c_str(), bytes);
+            GlobalUnlock(memory);
+            ok = SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
+        }
         if (!ok) GlobalFree(memory);
     }
     CloseClipboard();

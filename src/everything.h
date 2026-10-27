@@ -36,6 +36,9 @@ struct EvReply
     std::unique_ptr<uint8_t[]> data;
 };
 
+// Fills reply.items from the `size` bytes of an EVERYTHING_IPC_LIST2 reply in reply.data; false if it is malformed.
+bool ParseReply(EvReply& reply, size_t size);
+
 // What the settings window shows about Everything.
 enum class EvStatus : uint8_t
 {

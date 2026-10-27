@@ -347,7 +347,7 @@ bool IconLoader::Next(Job& job)
 
 DWORD WINAPI IconLoader::ThreadMain(void* self)
 {
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    (void)CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     static_cast<IconLoader*>(self)->Work();
     CoUninitialize();
     return 0;

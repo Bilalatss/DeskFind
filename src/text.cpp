@@ -161,8 +161,13 @@ const TextEngine::FormatEntry& TextEngine::Format(const TextStyle& style) const
 
     FormatEntry entry{style.font, style.size, style.semibold, nullptr, nullptr};
     const std::wstring& family = style.font == Font::Icons ? iconFamily_ : uiFamily_;
-    factory_->CreateTextFormat(family.c_str(), nullptr, style.semibold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-                               DWRITE_FONT_STRETCH_NORMAL, style.size, Lang::Get().locale, &entry.format);
+    if (FAILED(factory_->CreateTextFormat(family.c_str(), nullptr, style.semibold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+                                          DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, style.size, Lang::Get().locale, &entry.format)))
+    {
+        // Not cached, so the next call tries again; CreateLayout fails without a format and every caller handles that.
+        static const FormatEntry none{};
+        return none;
+    }
     entry.format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     factory_->CreateEllipsisTrimmingSign(entry.format, &entry.ellipsis);
     formats_.push_back(entry);

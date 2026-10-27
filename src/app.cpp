@@ -133,7 +133,7 @@ int App::Run(int start)
     stats_ = Stats::Load();
     if (!stats_.since) stats_.since = int64_t(std::time(nullptr));
     Lang::Set(settings_.language);
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    (void)CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     if (!text_.Init() || !CreateMainWindow()) return 1;
     LoadTheme();
     search_.Init(hwnd_);
@@ -770,7 +770,7 @@ void App::UpdateStatus()
         SetStatus(lang.noResults);
         return;
     }
-    wchar_t time[32];
+    wchar_t time[32] = {};
     if (view.elapsedMs < 1) wcscpy_s(time, L"<1 ms");
     else swprintf_s(time, L"%d ms", int(std::lround(view.elapsedMs)));
     SetStatus(FormatCount(total) + L" " + (total == 1 ? lang.result : lang.results) + L" · " + time);
@@ -933,7 +933,7 @@ void CALLBACK App::OnInstallExit(void* context, BOOLEAN) { PostMessageW(static_c
 // winget's exit code is not trusted either way ("already installed" is an error): what counts is whether Everything is there now.
 void App::InstallDone()
 {
-    if (installWait_) UnregisterWait(installWait_);
+    if (installWait_) (void)UnregisterWait(installWait_);
     if (installProcess_) CloseHandle(installProcess_);
     installWait_ = installProcess_ = nullptr;
     evInstalling_ = false;

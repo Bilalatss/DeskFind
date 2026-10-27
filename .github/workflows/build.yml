@@ -8,44 +8,66 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # the release step uploads assets
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Build
-        shell: cmd
-        run: build.cmd
-
-      - name: Check the tag matches src/version.h
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Check the versions agree
         shell: pwsh
         run: |
           $version = (Select-String -Path src/version.h -Pattern '#define DESKFIND_VERSION "(.+)"').Matches[0].Groups[1].Value
-          if ("v$version" -ne $env:GITHUB_REF_NAME) { throw "Tag $env:GITHUB_REF_NAME does not match $version in src/version.h" }
+          $manifest = ([xml](Get-Content res/app.manifest -Raw)).assembly.assemblyIdentity.version
+          if ($manifest -ne "$version.0") { throw "res/app.manifest says $manifest, src/version.h says $version" }
+          if ($env:GITHUB_REF -like 'refs/tags/v*' -and "v$version" -ne $env:GITHUB_REF_NAME) { throw "Tag $env:GITHUB_REF_NAME does not match $version in src/version.h" }
 
-      - name: Checksum
+      - name: Code analysis
+        shell: cmd
+        run: build.cmd analyze
+
+      - name: Build and test (x64)
+        shell: cmd
+        run: build.cmd test
+
+      - name: Build (Arm64)
+        shell: cmd
+        run: build.cmd arm64
+
+      - name: Checksums
         shell: pwsh
         run: |
-          $hash = (Get-FileHash bin/DeskFind.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  DeskFind.exe" | Set-Content bin/SHA256SUMS.txt -Encoding ascii
+          Get-ChildItem bin/DeskFind.exe, bin/DeskFind-arm64.exe | ForEach-Object {
+            "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+          } | Set-Content bin/SHA256SUMS.txt -Encoding ascii
           Get-Content bin/SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: DeskFind
           path: |
             bin/DeskFind.exe
+            bin/DeskFind-arm64.exe
             bin/SHA256SUMS.txt
 
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  # Only a v* tag publishes, and only this job can write to the repository.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: DeskFind
+
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
-            bin/DeskFind.exe
-            bin/SHA256SUMS.txt
+            DeskFind.exe
+            DeskFind-arm64.exe
+            SHA256SUMS.txt
           generate_release_notes: true

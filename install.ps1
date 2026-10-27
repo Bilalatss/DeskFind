@@ -22,7 +22,12 @@
         Say "Couldn't reach GitHub: $($_.Exception.Message)" Red
         return
     }
-    $exe = $release.assets | Where-Object name -eq 'DeskFind.exe' | Select-Object -First 1
+    # Windows on Arm gets its native build (the machine's own architecture, whatever this PowerShell runs as); anything
+    # else, or a release without one, the x64 build.
+    $arch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -ErrorAction SilentlyContinue).PROCESSOR_ARCHITECTURE
+    $exe = $null
+    if ($arch -eq 'ARM64') { $exe = $release.assets | Where-Object name -eq 'DeskFind-arm64.exe' | Select-Object -First 1 }
+    if (-not $exe) { $exe = $release.assets | Where-Object name -eq 'DeskFind.exe' | Select-Object -First 1 }
     $sums = $release.assets | Where-Object name -eq 'SHA256SUMS.txt' | Select-Object -First 1
     if (-not $exe) {
         Say "Release $($release.tag_name) has no DeskFind.exe." Red
@@ -38,7 +43,7 @@
         if ($sums) {
             $sumsFile = Join-Path $temp 'SHA256SUMS.txt'
             Invoke-WebRequest $sums.browser_download_url -OutFile $sumsFile -UseBasicParsing
-            $line = Get-Content $sumsFile | Where-Object { $_ -match '\sDeskFind\.exe\s*$' } | Select-Object -First 1
+            $line = Get-Content $sumsFile | Where-Object { $_ -match ('\s' + [regex]::Escape($exe.name) + '\s*$') } | Select-Object -First 1
             $expected = if ($line) { ($line -split '\s+')[0] } else { '' }
             $actual = (Get-FileHash $file -Algorithm SHA256).Hash
             if (-not $expected -or $actual -ne $expected.ToUpperInvariant()) {

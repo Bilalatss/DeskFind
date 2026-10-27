@@ -37,7 +37,7 @@ void History::Load()
     GetFileSizeEx(file, &size);
     std::string data(size_t(std::min<LONGLONG>(size.QuadPart, 1 << 20)), '\0');
     DWORD read = 0;
-    ReadFile(file, data.data(), DWORD(data.size()), &read, nullptr);
+    if (!ReadFile(file, data.data(), DWORD(data.size()), &read, nullptr)) read = 0;
     CloseHandle(file);
     data.resize(read);
 
