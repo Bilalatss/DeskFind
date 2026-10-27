@@ -8,7 +8,9 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue' # Windows PowerShell downloads far slower while drawing progress
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    $repo = 'Bilalatss/DeskFind'
+    # The release's own download links, not api.github.com: the API allows 60 requests an hour per address, which a VPN
+    # or a shared network uses up.
+    $base = 'https://github.com/Bilalatss/DeskFind/releases/latest/download'
 
     function Say($text, $color = 'Gray') { Write-Host "  $text" -ForegroundColor $color }
 
@@ -16,42 +18,41 @@
     Say 'DeskFind' Cyan
     if ([Environment]::OSVersion.Version.Build -lt 22000) { Say 'Note: DeskFind is made for Windows 11; on Windows 10 it may not look right.' Yellow }
 
-    try {
-        $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'DeskFind-installer' }
-    } catch {
-        Say "Couldn't reach GitHub: $($_.Exception.Message)" Red
-        return
-    }
-    # Windows on Arm gets its native build (the machine's own architecture, whatever this PowerShell runs as); anything
-    # else, or a release without one, the x64 build.
-    $arch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -ErrorAction SilentlyContinue).PROCESSOR_ARCHITECTURE
-    $exe = $null
-    if ($arch -eq 'ARM64') { $exe = $release.assets | Where-Object name -eq 'DeskFind-arm64.exe' | Select-Object -First 1 }
-    if (-not $exe) { $exe = $release.assets | Where-Object name -eq 'DeskFind.exe' | Select-Object -First 1 }
-    $sums = $release.assets | Where-Object name -eq 'SHA256SUMS.txt' | Select-Object -First 1
-    if (-not $exe) {
-        Say "Release $($release.tag_name) has no DeskFind.exe." Red
-        return
-    }
-
     $temp = Join-Path ([IO.Path]::GetTempPath()) ('DeskFind-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $temp | Out-Null
     try {
-        Say "Downloading $($release.tag_name)..."
-        $file = Join-Path $temp 'DeskFind.exe'
-        Invoke-WebRequest $exe.browser_download_url -OutFile $file -UseBasicParsing
-        if ($sums) {
-            $sumsFile = Join-Path $temp 'SHA256SUMS.txt'
-            Invoke-WebRequest $sums.browser_download_url -OutFile $sumsFile -UseBasicParsing
-            $line = Get-Content $sumsFile | Where-Object { $_ -match ('\s' + [regex]::Escape($exe.name) + '\s*$') } | Select-Object -First 1
-            $expected = if ($line) { ($line -split '\s+')[0] } else { '' }
-            $actual = (Get-FileHash $file -Algorithm SHA256).Hash
-            if (-not $expected -or $actual -ne $expected.ToUpperInvariant()) {
-                Say 'Checksum mismatch: the download is not the released file. Nothing was installed.' Red
-                return
-            }
-            Say 'Checksum OK.'
+        # The checksums come first: they also list which builds the release has.
+        $sumsFile = Join-Path $temp 'SHA256SUMS.txt'
+        try {
+            Invoke-WebRequest "$base/SHA256SUMS.txt" -OutFile $sumsFile -UseBasicParsing
+        } catch {
+            if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) { Say 'No DeskFind release has been published yet.' Red }
+            else { Say "Couldn't reach GitHub: $($_.Exception.Message)" Red }
+            return
         }
+        $sums = @{}
+        foreach ($line in Get-Content $sumsFile) {
+            if ($line -match '^([0-9a-fA-F]{64})\s+\*?(\S+)\s*$') { $sums[$Matches[2]] = $Matches[1].ToUpperInvariant() }
+        }
+
+        # Windows on Arm gets its native build (the machine's own architecture, whatever this PowerShell runs as); anything
+        # else, or a release without one, the x64 build.
+        $arch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -ErrorAction SilentlyContinue).PROCESSOR_ARCHITECTURE
+        $name = if ($arch -eq 'ARM64' -and $sums['DeskFind-arm64.exe']) { 'DeskFind-arm64.exe' } else { 'DeskFind.exe' }
+        if (-not $sums[$name]) {
+            Say "The latest release has no $name." Red
+            return
+        }
+
+        Say 'Downloading...'
+        $file = Join-Path $temp 'DeskFind.exe'
+        Invoke-WebRequest "$base/$name" -OutFile $file -UseBasicParsing
+        if ((Get-FileHash $file -Algorithm SHA256).Hash -ne $sums[$name]) {
+            Say 'Checksum mismatch: the download is not the released file. Nothing was installed.' Red
+            return
+        }
+        $version = 'v' + (Get-Item $file).VersionInfo.ProductVersion
+        Say "Checksum OK ($version)."
 
         # DeskFind searches the rest of the PC through Everything (voidtools); without it the desktop and its folders are
         # still searched. Asked before DeskFind starts, so its first run already finds Everything.
@@ -74,7 +75,7 @@
         $null = $process.Handle # keeps the exit code readable after the process ends
         $process.WaitForExit()
         switch ($process.ExitCode) {
-            0 { Say "Installed $($release.tag_name). Press Ctrl+F on the desktop to search." Green }
+            0 { Say "Installed $version. Press Ctrl+F on the desktop to search." Green }
             1 { Say 'A running DeskFind did not close. Quit it from its tray icon and try again.' Red; return }
             2 { Say "Couldn't copy DeskFind.exe to $env:LOCALAPPDATA\Programs\DeskFind." Red; return }
             3 { Say 'Installed, but it did not start. Start DeskFind from the Start menu search.' Yellow }
