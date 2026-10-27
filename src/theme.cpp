@@ -25,6 +25,23 @@ Argb Mix(Argb from, Argb to, float amount)
 bool Theme::AppsDark() { return ReadDword(PersonalizeKey, L"AppsUseLightTheme", 1) == 0; }
 bool Theme::SystemDark() { return ReadDword(PersonalizeKey, L"SystemUsesLightTheme", 1) == 0; }
 
+bool Theme::HighContrast()
+{
+    HIGHCONTRASTW contrast{sizeof(contrast)};
+    return SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) && (contrast.dwFlags & HCF_HIGHCONTRASTON);
+}
+
+Argb Theme::SystemColor(int index)
+{
+    COLORREF c = GetSysColor(index);
+    return 0xFF000000 | (uint32_t(GetRValue(c)) << 16) | (uint32_t(GetGValue(c)) << 8) | GetBValue(c);
+}
+
+bool Theme::IsDarkColor(Argb color)
+{
+    return ((color >> 16) & 0xFF) * 299 + ((color >> 8) & 0xFF) * 587 + (color & 0xFF) * 114 < 128 * 1000;
+}
+
 Argb Theme::Accent()
 {
     // DWM stores it as 0xAABBGGRR.
@@ -53,9 +70,27 @@ Argb Theme::AccentShade(int index)
 
 void Theme::Load(float gamma, float grayscaleContrast, int choice, bool transparency)
 {
-    dark = IsDark(choice);
+    highContrast = HighContrast();
     accent = Accent();
     Argb* ink = palette.ink;
+    selectedText = outline = 0;
+    if (highContrast)
+    {
+        // The contrast theme's own colors, opaque: no backdrop, and outlines where the usual look relies on faint fills.
+        tint = SystemColor(COLOR_WINDOW);
+        dark = IsDarkColor(tint);
+        ink[int(Ink::Primary)] = ink[int(Ink::Secondary)] = SystemColor(COLOR_WINDOWTEXT);
+        ink[int(Ink::Tertiary)] = SystemColor(COLOR_GRAYTEXT);
+        ink[int(Ink::Accent)] = SystemColor(COLOR_HOTLIGHT);
+        ink[int(Ink::White)] = selectedText = SystemColor(COLOR_HIGHLIGHTTEXT);
+        selected = selection = outline = SystemColor(COLOR_HIGHLIGHT);
+        hover = keyCapBg = 0;
+        divider = scrollThumb = keyCapBorder = ink[int(Ink::Primary)];
+        accentFill = selectedText;
+        palette.Build(gamma, grayscaleContrast);
+        return;
+    }
+    dark = IsDark(choice);
     if (dark)
     {
         tint = 0xD01E1E1E;

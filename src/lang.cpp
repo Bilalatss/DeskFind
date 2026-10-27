@@ -192,6 +192,9 @@ constexpr Lang English{
     .linkLicense = L"MIT License",
     .linkEverything = L"Everything by voidtools",
     .aboutNote = L"DeskFind searches through Everything and isn't affiliated with voidtools.",
+
+    .accResults = L"Results",
+    .accPages = L"Pages",
 };
 
 constexpr Lang Turkish{
@@ -384,6 +387,9 @@ constexpr Lang Turkish{
     .linkLicense = L"MIT lisansı",
     .linkEverything = L"voidtools Everything",
     .aboutNote = L"DeskFind, Everything üzerinden arar; voidtools ile bir bağı yoktur.",
+
+    .accResults = L"Sonuçlar",
+    .accPages = L"Sayfalar",
 };
 
 const Lang* g_current = nullptr;

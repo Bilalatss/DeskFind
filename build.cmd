@@ -51,13 +51,13 @@ rem Pixel, text and matching loops are built for speed, everything else for size
 rem link everything else.
 set FLAGS=%FLAGS% /GL /Gy /Gw /MT
 cl %FLAGS% /Fo%OBJ%\ /O2 src\canvas.cpp src\text.cpp src\strings.cpp || exit /b 1
-cl %FLAGS% /Fo%OBJ%\ /O1 src\app.cpp src\search.cpp src\everything.cpp src\history.cpp src\icons.cpp src\lang.cpp src\selftest.cpp ^
-   src\settings.cpp src\settingsui.cpp src\setup.cpp src\shell.cpp src\theme.cpp src\tray.cpp || exit /b 1
+cl %FLAGS% /Fo%OBJ%\ /O1 src\access.cpp src\app.cpp src\appaccess.cpp src\appinput.cpp src\appview.cpp src\search.cpp src\everything.cpp src\history.cpp src\icons.cpp src\lang.cpp src\selftest.cpp ^
+   src\settings.cpp src\settingsaccess.cpp src\settingsui.cpp src\setup.cpp src\shell.cpp src\theme.cpp src\tray.cpp || exit /b 1
 cl %FLAGS% /Fo%OBJ%\main\ /O1 src\main.cpp || exit /b 1
 
 rem Static vcruntime, system UCRT (part of Windows 10+): no redistributable needed and a small exe.
 set LFLAGS=/nologo /LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO /MANIFEST:NO /NODEFAULTLIB:libucrt.lib ucrt.lib user32.lib gdi32.lib shell32.lib ^
-   ole32.lib oleaut32.lib dwmapi.lib dwrite.lib advapi32.lib shlwapi.lib imm32.lib uuid.lib comctl32.lib shcore.lib
+   ole32.lib oleaut32.lib dwmapi.lib dwrite.lib advapi32.lib shlwapi.lib imm32.lib uuid.lib comctl32.lib shcore.lib uiautomationcore.lib
 link %LFLAGS% /OUT:%OBJ%.exe %OBJ%\*.obj %OBJ%\main\main.obj %OBJ%\app.res /SUBSYSTEM:WINDOWS || exit /b 1
 copy /y %OBJ%.exe bin\%OUT%.exe >nul
 if /i "%MODE%"=="test" (

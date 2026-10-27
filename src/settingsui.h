@@ -3,6 +3,7 @@
 #pragma once
 #include "common.h"
 
+#include "access.h"
 #include "canvas.h"
 #include "everything.h"
 #include "history.h"
@@ -35,7 +36,7 @@ protected:
     ~SettingsHost() = default;
 };
 
-class SettingsWindow
+class SettingsWindow : AccessSource
 {
 public:
     void Open(SettingsHost* host, bool everything = false); // everything: on the Search page, at Everything's card
@@ -150,12 +151,27 @@ private:
         bool Valid() const { return nav >= 0 || item >= 0; }
     };
 
+    // AccessSource (settingsaccess.cpp)
+    int AccessParent(int id) override;
+    void AccessChildren(int id, std::vector<int>& out) override;
+    bool AccessDescribe(int id, AccessNode& node) override;
+    int AccessFocus() override;
+    int AccessHit(int x, int y) override;
+    bool AccessAct(int id, AccessAction action) override;
+    bool AccessSetValue(int id, const std::wstring& value) override;
+    int TargetId(const Target& target) const;
+    Target IdTarget(int id) const;
+    void DescribeControl(const Item& item, const Control& c, bool open, bool recording, AccessNode& node) const;
+    void AccessRebuilt();
+    void AccessPopupChanged(const Target& combo);
+
     struct Colors
     {
         bool dark = true;
         Argb background, layer, layerStroke, card, cardStroke, cardHover, control, controlHover, controlPressed, controlStroke;
         Argb strong, toggleOff, toggleOffHover, accent, accentHover, accentPressed, onAccent, navHover, navSelected, focus;
         Argb scrollThumb, warning, popup, divider;
+        Argb outline = 0; // a contrast theme shows hover with it, where the usual fills are too faint to see
     };
 
     struct Anim // a toggle's knob sliding over
@@ -220,12 +236,17 @@ private:
     // Geometry, in pixels at the window's DPI.
     int D(float dip) const { return int(dip * scale_ + 0.5f); }
     int NavWidth() const;
+    RECT NavRect(int page) const;
+    RECT PopupItemRect(int option) const; // in the drop-down's client area
+    int PopupItemAt(int y) const;
+    RECT ContentToClient(const RECT& r) const;
     int HeaderBottom() const;
     RECT Viewport() const;
     int MaxScroll() const;
 
     SettingsHost* host_ = nullptr;
     HWND hwnd_ = nullptr, popup_ = nullptr;
+    Accessibility access_;
     Canvas canvas_, popupCanvas_;
     UINT dpi_ = 96;
     float scale_ = 1;

@@ -4,6 +4,7 @@
 
 #include <unordered_map>
 
+#include "access.h"
 #include "canvas.h"
 #include "icons.h"
 #include "search.h"
@@ -13,7 +14,7 @@
 #include "theme.h"
 #include "tray.h"
 
-class App : public SettingsHost
+class App : public SettingsHost, AccessSource
 {
 public:
     int Run(int start); // 0 in the background, 1 with the search box open, 2 with the settings open
@@ -38,6 +39,17 @@ public:
     void StartEverything() override;
 
 private:
+    // AccessSource (appaccess.cpp)
+    int AccessParent(int id) override;
+    void AccessChildren(int id, std::vector<int>& out) override;
+    bool AccessDescribe(int id, AccessNode& node) override;
+    int AccessFocus() override;
+    int AccessHit(int x, int y) override;
+    bool AccessAct(int id, AccessAction action) override;
+    bool AccessSetValue(int id, const std::wstring& value) override;
+    bool IsRowId(int id) const;
+    void AccessStatusChanged();
+
     // A row in the rest-of-PC group that stands in for Everything when it can't answer: what is wrong, what a click does.
     enum class Notice : uint8_t
     {
@@ -108,6 +120,9 @@ private:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     static void CALLBACK OnWinEvent(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD);
     LRESULT Handle(UINT msg, WPARAM wParam, LPARAM lParam);
+    void OnTimer(WPARAM id);
+    void OnIcon(IconResult* result);  // a file icon loaded (or dropped) on the icon thread
+    void OnTray(WPARAM wParam, LPARAM lParam);
 
     bool CreateMainWindow();
     void ApplyDwm();
@@ -218,6 +233,8 @@ private:
 
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
+    Accessibility access_;
+    bool listFocus_ = false; // the arrow keys put the selected result in focus for screen readers; editing takes it back
     HWINEVENTHOOK hook_ = nullptr;
     bool hotkeyRegistered_ = false;
     UINT taskbarCreated_ = 0;

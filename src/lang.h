@@ -203,6 +203,10 @@ struct Lang
     const wchar_t* linkEverything;
     const wchar_t* aboutNote;
 
+    // Names only a screen reader says.
+    const wchar_t* accResults; // the result list
+    const wchar_t* accPages;   // the settings window's page list
+
     static const Lang& Get();
     static void Set(int choice); // 0 Windows display language, 1 English, 2 Turkish
 };

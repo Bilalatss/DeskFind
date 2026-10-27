@@ -147,6 +147,7 @@ void SettingsWindow::Open(SettingsHost* host, bool everything)
     focus_ = -1;
     hwnd_ = CreateWindowExW(0, WindowClass, Lang::Get().settingsTitle, WS_OVERLAPPEDWINDOW, x, y, width, height, nullptr, nullptr, instance, this);
     if (!hwnd_) return;
+    access_.Attach(hwnd_, this);
     dpi_ = GetDpiForWindow(hwnd_);
     scale_ = float(dpi_) / 96.0f;
     LoadColors();
@@ -246,6 +247,24 @@ void SettingsWindow::LoadColors()
     ink[int(Ink::Tertiary)] = dark ? 0x87FFFFFF : 0x72000000;
     ink[int(Ink::Accent)] = dark ? Theme::AccentShade(0) : Theme::AccentShade(5);
     ink[int(Ink::White)] = c.onAccent;
+    c.outline = 0;
+    bool contrast = Theme::HighContrast();
+    if (contrast)
+    {
+        // A contrast theme replaces all of that with its own colors: opaque, and outlined where Fluent relies on faint fills.
+        transparency_ = false;
+        Argb window = Theme::SystemColor(COLOR_WINDOW), windowText = Theme::SystemColor(COLOR_WINDOWTEXT);
+        c.dark = dark = Theme::IsDarkColor(window);
+        c.background = c.layer = c.card = c.cardHover = c.toggleOff = c.toggleOffHover = c.popup = window;
+        c.control = c.controlHover = c.controlPressed = Theme::SystemColor(COLOR_BTNFACE);
+        c.layerStroke = c.cardStroke = c.controlStroke = c.strong = c.scrollThumb = c.divider = c.warning = windowText;
+        c.navHover = c.navSelected = 0;
+        c.accent = c.accentHover = c.accentPressed = c.focus = c.outline = Theme::SystemColor(COLOR_HIGHLIGHT);
+        c.onAccent = ink[int(Ink::White)] = Theme::SystemColor(COLOR_HIGHLIGHTTEXT);
+        ink[int(Ink::Primary)] = ink[int(Ink::Secondary)] = windowText;
+        ink[int(Ink::Tertiary)] = Theme::SystemColor(COLOR_GRAYTEXT);
+        ink[int(Ink::Accent)] = Theme::SystemColor(COLOR_HOTLIGHT);
+    }
     TextEngine& text = host_->Text();
     palette_.Build(text.Gamma(), text.GrayscaleContrast());
 
@@ -254,6 +273,8 @@ void SettingsWindow::LoadColors()
     DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkMode, sizeof(darkMode));
     DWM_SYSTEMBACKDROP_TYPE backdrop = transparency_ ? DWMSBT_MAINWINDOW : DWMSBT_NONE;
     DwmSetWindowAttribute(hwnd_, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    COLORREF border = contrast ? GetSysColor(COLOR_WINDOWTEXT) : DWMWA_COLOR_DEFAULT;
+    DwmSetWindowAttribute(hwnd_, DWMWA_BORDER_COLOR, &border, sizeof(border));
     MARGINS margins = transparency_ ? MARGINS{-1, -1, -1, -1} : MARGINS{0, 0, 0, 0};
     DwmExtendFrameIntoClientArea(hwnd_, &margins);
 }
@@ -346,6 +367,7 @@ void SettingsWindow::Rebuild()
     pageTitle_ = Text(names[int(page_)], Title, true, Ink::Primary);
     Layout();
     InvalidateRect(hwnd_, nullptr, FALSE);
+    AccessRebuilt();
 }
 
 void SettingsWindow::BuildGeneral()
@@ -589,6 +611,30 @@ void SettingsWindow::BuildAbout()
 // ---------------------------------------------------------------- layout
 
 int SettingsWindow::NavWidth() const { return D(NavWidthDip); }
+
+RECT SettingsWindow::NavRect(int page) const
+{
+    int top = D(NavTop) + page * (D(NavItem) + D(NavGap));
+    return RECT{D(NavPad), top, NavWidth() - D(NavPad), top + D(NavItem)};
+}
+
+RECT SettingsWindow::PopupItemRect(int option) const
+{
+    RECT client{};
+    if (popup_) GetClientRect(popup_, &client);
+    int top = D(PopupPad) + option * D(PopupItem);
+    return RECT{D(PopupPad), top + D(2), client.right - D(PopupPad), top + D(PopupItem) - D(2)};
+}
+
+int SettingsWindow::PopupItemAt(int y) const { return (y - D(PopupPad)) / D(PopupItem); }
+
+// A rectangle in content coordinates as it is on screen now, cut to the scrolled area; empty when scrolled away.
+RECT SettingsWindow::ContentToClient(const RECT& r) const
+{
+    RECT vp = Viewport(), moved = Offset(r, vp.top - scroll_), out{};
+    IntersectRect(&out, &moved, &vp);
+    return out;
+}
 int SettingsWindow::HeaderBottom() const { return D(HeaderHeight); }
 
 RECT SettingsWindow::Viewport() const
@@ -777,12 +823,12 @@ void SettingsWindow::PaintNav()
     canvas_.DrawText(appVersion_, D(18) + icon + D(12), D(20) + int(appName_.height), palette_);
     for (int i = 0; i < int(Page::Count); i++)
     {
-        int top = D(NavTop) + i * (D(NavItem) + D(NavGap));
-        RECT r{D(NavPad), top, NavWidth() - D(NavPad), top + D(NavItem)};
+        RECT r = NavRect(i);
         bool selected = int(page_) == i, hot = hover_.nav == i;
         Argb fill = selected ? (hot ? colors_.cardHover : colors_.navSelected) : hot ? colors_.navHover : 0;
         if (pressed_.nav == i && hot) fill = colors_.controlPressed;
         if (fill) canvas_.FillRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), float(D(Radius)), fill);
+        if (hot && colors_.outline) canvas_.StrokeRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), float(D(Radius)), 1, colors_.outline);
         if (selected)
         {
             float middle = float(r.top + r.bottom) / 2;
@@ -867,7 +913,8 @@ void SettingsWindow::PaintItem(Item& item, int index, int dy)
     Argb fill = colors_.card;
     if (link && hover_ == self) fill = pressed_ == self ? colors_.controlPressed : colors_.cardHover;
     canvas_.FillRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, fill);
-    canvas_.StrokeRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, 1, colors_.cardStroke);
+    canvas_.StrokeRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, 1,
+                            link && hover_ == self && colors_.outline ? colors_.outline : colors_.cardStroke);
 
     int textX = r.left + D(TextLeft);
     int textRight = item.controls.empty() ? r.right - D(CardPad) - (link ? D(28) : 0) : int(item.controls.front().rect.left) - D(16);
@@ -982,6 +1029,11 @@ void SettingsWindow::PaintControl(Item&, int itemIndex, Control& c, int controlI
             canvas_.FillRoundRect(sx0, sy0, sx1, sy1, float(D(ToggleHeight)) / 2, hot ? colors_.toggleOffHover : colors_.toggleOff);
             canvas_.StrokeRoundRect(sx0, sy0, sx1, sy1, float(D(ToggleHeight)) / 2, 1, colors_.strong);
         }
+        if (hot && colors_.outline)
+        {
+            float grow = float(D(2));
+            canvas_.StrokeRoundRect(sx0 - grow, sy0 - grow, sx1 + grow, sy1 + grow, float(D(ToggleHeight)) / 2 + grow, 1, colors_.outline);
+        }
         float knob = float(D(hot ? 14.0f : 12.0f)) / 2;
         float cx = sx0 + D(10) + position * D(20), cy = float(middle);
         Argb knobColor = lit ? colors_.onAccent : palette_.ink[int(Ink::Secondary)];
@@ -997,6 +1049,7 @@ void SettingsWindow::PaintControl(Item&, int itemIndex, Control& c, int controlI
                              : (down || open ? colors_.controlPressed : hot ? colors_.controlHover : colors_.control);
         canvas_.FillRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, fill);
         if (!c.accent) canvas_.StrokeRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, 1, colors_.controlStroke);
+        if (hot && colors_.outline) canvas_.StrokeRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, float(D(2)), colors_.outline);
         const TextBlock& text = c.blocks[0];
         if (c.type == Control::Type::Button)
         {
@@ -1013,6 +1066,7 @@ void SettingsWindow::PaintControl(Item&, int itemIndex, Control& c, int controlI
     case Control::Type::IconButton:
     {
         if (hot) canvas_.FillRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, down ? colors_.controlPressed : colors_.navHover);
+        if (hot && colors_.outline) canvas_.StrokeRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, 1, colors_.outline);
         const TextBlock& glyph = c.blocks[0];
         canvas_.DrawText(glyph, (r.left + r.right - int(glyph.width)) / 2, middle - int(glyph.height) / 2, palette_);
         break;
@@ -1022,6 +1076,7 @@ void SettingsWindow::PaintControl(Item&, int itemIndex, Control& c, int controlI
         Argb fill = down ? colors_.controlPressed : hot ? colors_.controlHover : colors_.control;
         canvas_.FillRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, fill);
         if (recording) canvas_.StrokeRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, float(D(2)), colors_.accent);
+        else if (hot && colors_.outline) canvas_.StrokeRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, float(D(2)), colors_.outline);
         else canvas_.StrokeRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), radius, 1, colors_.controlStroke);
         const TextBlock& pencil = c.blocks[0];
         canvas_.DrawText(pencil, r.right - D(10) - int(pencil.width), middle - int(pencil.height) / 2, palette_);
@@ -1075,8 +1130,7 @@ void SettingsWindow::PaintFocus(int dy)
     RECT r{};
     if (t.nav >= 0)
     {
-        int top = D(NavTop) + t.nav * (D(NavItem) + D(NavGap));
-        r = RECT{D(NavPad), top, NavWidth() - D(NavPad), top + D(NavItem)};
+        r = NavRect(t.nav);
     }
     else
     {
@@ -1103,11 +1157,12 @@ void SettingsWindow::PaintPopup(HDC hdc)
     {
         for (size_t i = 0; i < combo->options.size() && i < popupText_.size(); i++)
         {
-            int top = D(PopupPad) + int(i) * D(PopupItem);
-            RECT r{D(PopupPad), top + D(2), client.right - D(PopupPad), top + D(PopupItem) - D(2)};
+            RECT r = PopupItemRect(int(i));
             bool selected = int(i) == combo->selected, hot = int(i) == popupHover_;
             Argb fill = hot ? colors_.cardHover : selected ? colors_.navSelected : 0;
             if (fill) popupCanvas_.FillRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), float(D(Radius)), fill);
+            if (hot && colors_.outline)
+                popupCanvas_.StrokeRoundRect(float(r.left), float(r.top), float(r.right), float(r.bottom), float(D(Radius)), 1, colors_.outline);
             if (selected)
             {
                 float middle = float(r.top + r.bottom) / 2;
@@ -1128,10 +1183,7 @@ SettingsWindow::Target SettingsWindow::HitTest(int x, int y) const
     if (x < NavWidth())
     {
         for (int i = 0; i < int(Page::Count); i++)
-        {
-            int top = D(NavTop) + i * (D(NavItem) + D(NavGap));
-            if (y >= top && y < top + D(NavItem) && x >= D(NavPad) && x < NavWidth() - D(NavPad)) t.nav = i;
-        }
+            if (Inside(NavRect(i), x, y)) t.nav = i;
         return t;
     }
     RECT vp = Viewport();
@@ -1195,6 +1247,7 @@ void SettingsWindow::MoveFocus(int delta)
     focusVisible_ = true;
     EnsureFocusVisible();
     InvalidateRect(hwnd_, nullptr, FALSE);
+    access_.Sync();
 }
 
 void SettingsWindow::EnsureFocusVisible()
@@ -1408,6 +1461,7 @@ void SettingsWindow::OpenPopup(const Target& target)
     }
     ShowWindow(popup_, SW_SHOWNOACTIVATE);
     InvalidateRect(hwnd_, nullptr, FALSE);
+    AccessPopupChanged(target);
 }
 
 void SettingsWindow::ClosePopup(bool apply)
@@ -1418,12 +1472,14 @@ void SettingsWindow::ClosePopup(bool apply)
     int arg = combo ? combo->arg : 0, option = popupHover_;
     bool changed = combo && option >= 0 && option != combo->selected;
     HWND popup = popup_;
+    Target owner = popupFor_;
     popup_ = nullptr;
     popupFor_ = {};
     popupText_.clear();
     DestroyWindow(popup);
     popupCanvas_.Release();
     InvalidateRect(hwnd_, nullptr, FALSE);
+    AccessPopupChanged(owner);
     if (apply && changed) Act_(act, arg, option);
 }
 
@@ -1438,6 +1494,7 @@ void SettingsWindow::StartRecording(const Target& target)
     host_->SuspendHotkeys(true); // so the old shortcut reaches this window like any other key
     Layout();
     InvalidateRect(hwnd_, nullptr, FALSE);
+    access_.Sync();
 }
 
 void SettingsWindow::StopRecording()
@@ -1449,6 +1506,7 @@ void SettingsWindow::StopRecording()
     {
         Layout();
         InvalidateRect(hwnd_, nullptr, FALSE);
+        access_.Sync();
     }
 }
 
@@ -1583,7 +1641,7 @@ LRESULT SettingsWindow::HandlePopup(UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_MOUSEMOVE:
     {
-        int index = (GET_Y_LPARAM(lParam) - D(PopupPad)) / D(PopupItem);
+        int index = PopupItemAt(GET_Y_LPARAM(lParam));
         Control* combo = ControlAt(popupFor_);
         if (!combo || index < 0 || index >= int(combo->options.size())) index = -1;
         if (index != popupHover_ && index >= 0)
@@ -1595,7 +1653,7 @@ LRESULT SettingsWindow::HandlePopup(UINT msg, WPARAM wParam, LPARAM lParam)
     }
     case WM_LBUTTONUP:
     {
-        int index = (GET_Y_LPARAM(lParam) - D(PopupPad)) / D(PopupItem);
+        int index = PopupItemAt(GET_Y_LPARAM(lParam));
         Control* combo = ControlAt(popupFor_);
         if (combo && index >= 0 && index < int(combo->options.size()))
         {
@@ -1612,6 +1670,12 @@ LRESULT SettingsWindow::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
     {
+    case WM_GETOBJECT:
+    {
+        LRESULT result = 0;
+        if (access_.OnGetObject(wParam, lParam, result)) return result;
+        break;
+    }
     case WM_ERASEBKGND: return 1;
     case WM_PAINT:
     {
@@ -1729,6 +1793,7 @@ LRESULT SettingsWindow::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
             auto found = std::find(list.begin(), list.end(), target);
             if (found != list.end()) focus_ = int(found - list.begin());
             Activate(target);
+            access_.Sync();
         }
         return 0;
     }
@@ -1761,6 +1826,7 @@ LRESULT SettingsWindow::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
             default: return 0;
             }
             InvalidateRect(popup_, nullptr, FALSE);
+            access_.Sync();
             return 0;
         }
         if (msg == WM_SYSKEYDOWN) break; // Alt+F4, Alt+Space
@@ -1811,13 +1877,15 @@ LRESULT SettingsWindow::Handle(UINT msg, WPARAM wParam, LPARAM lParam)
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return 0;
+    case WM_SYSCOLORCHANGE: Refresh(); break;
     case WM_SETTINGCHANGE:
-        if (lParam && wcscmp(reinterpret_cast<const wchar_t*>(lParam), L"ImmersiveColorSet") == 0) Refresh();
+        if (wParam == SPI_SETHIGHCONTRAST || (lParam && wcscmp(reinterpret_cast<const wchar_t*>(lParam), L"ImmersiveColorSet") == 0)) Refresh();
         break;
     case WM_DWMCOLORIZATIONCOLORCHANGED: Refresh(); break;
     case WM_CLOSE: DestroyWindow(hwnd_); return 0;
     case WM_DESTROY:
     {
+        access_.Detach();
         ClosePopup(false);
         StopRecording();
         KillTimer(hwnd_, TimerAnim);
