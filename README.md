@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/Bilalatss/DeskFind/releases/latest"><img src="https://img.shields.io/github/v/release/Bilalatss/DeskFind?label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-11-0078D4" alt="Windows 11">
-  <img src="https://img.shields.io/badge/size-430%20KB-2ea44f" alt="430 KB">
+  <img src="https://img.shields.io/badge/size-460%20KB-2ea44f" alt="460 KB">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Bilalatss/DeskFind" alt="MIT license"></a>
 </p>
 
@@ -38,8 +38,10 @@ to the app you're in. If you'd rather have it everywhere, or on other keys, that
 - **Learns.** What you open often moves up, and the empty box lists what you opened recently.
 - **Skips the noise.** `node_modules`, `.git`, `__pycache__` and similar folders never show up. Neither do the Windows folder, temp files and Windows' *Recent* shortcuts. Build output, app data and logs come after your own files.
 - **Yours to set up.** A settings window in the style of Windows 11 Settings covers the shortcuts, the result groups, which folders count, the look and more. Every change applies at once.
-- **Tiny.** A 430 KB exe with no runtime to install. It uses under 1 MB of memory while it waits in the tray.
+- **Tiny.** A 460 KB exe with no runtime to install. It uses under 1 MB of memory while it waits in the tray.
 - **Looks native.** Acrylic, Mica, rounded corners, light and dark mode and your accent color, like Windows itself.
+- **Accessible.** Narrator and other screen readers can read and use the search box, the results and every setting, and
+  Windows' contrast themes are followed.
 - **English and Turkish.** It follows the Windows display language unless you pick one.
 - **Private.** No network access, no telemetry.
 
@@ -54,7 +56,7 @@ irm https://raw.githubusercontent.com/Bilalatss/DeskFind/main/install.ps1 | iex
 
 The [script](install.ps1):
 
-- downloads `DeskFind.exe` from the latest release and checks its SHA-256 against the release;
+- downloads `DeskFind.exe` (the Arm64 build on Windows on Arm) from the latest release and checks its SHA-256 against the release;
 - offers to install Everything with winget if it is missing;
 - copies it to `%LOCALAPPDATA%\Programs\DeskFind`;
 - adds it to the Start menu and to *Settings › Apps*;
@@ -137,6 +139,7 @@ Open them from the tray menu, the ⚙ button in the search box, <kbd>Ctrl</kbd>+
 
 - **Ranking:** the best name match comes first: the exact name, then the start of the name, the start of a word, and anywhere in the name. Among equal matches, what you open often and recently goes up, and build output, caches and app data go down.
 - **Drawing:** DeskFind draws its own windows, the settings included. DirectWrite glyphs are rasterized on the CPU into a bitmap shown in a DWM acrylic window. There is no UI framework and no GPU context, so there is very little to keep in memory while it's hidden.
+- **Accessibility:** since nothing on screen is a standard control, both windows describe themselves to screen readers through UI Automation. In a contrast theme they drop the transparency and draw with the theme's own colors.
 - **Idle:** a few seconds after the box closes, DeskFind frees its caches, trims its memory and asks Windows to run it in efficiency mode.
 - **Speed:** while the box is open, DeskFind lets Everything out of Windows 11's efficiency mode. Its queries got about 30% faster in testing.
 
@@ -152,11 +155,11 @@ Measured on the author's PC (Windows 11 24H2, about 2.6 million files indexed by
 | Typing on (filtered from the cache) | ~1 ms |
 | Memory while waiting in the tray | 0.3–0.7 MB |
 | Memory with the box open | ~5 MB |
-| Download | 430 KB |
+| Download | 460 KB |
 
 ## Requirements
 
-- **Windows 11**, x64. It is built and tested on 24H2. Windows 10 is untested; the window relies on Windows 11's acrylic and rounded corners.
+- **Windows 11**, x64 or Arm64. It is built and tested on 24H2 (x64); the Arm64 build is made by the same CI but untested on an Arm PC. Windows 10 is untested; the window relies on Windows 11's acrylic and rounded corners.
 - **[Everything](https://www.voidtools.com/downloads/) 1.4** by voidtools, the regular version, for the rest of the PC.
   - *Everything Lite* has no IPC, so it won't work.
   - If Everything is installed but not running, DeskFind starts it.
@@ -171,8 +174,15 @@ You need Visual Studio 2022 or later (or its Build Tools) with *Desktop developm
 ```bat
 build.cmd            :: bin\DeskFind.exe
 build.cmd install    :: build, then install it for this user
+build.cmd test       :: build, then run the tests (bin\DeskFindTests.exe)
+build.cmd arm64      :: bin\DeskFind-arm64.exe for Windows on Arm (needs the MSVC ARM64 build tools)
+build.cmd analyze    :: MSVC code analysis of every source file; any warning fails it
 build.cmd trace      :: bin\DeskFindTrace.exe, logging timings to %LOCALAPPDATA%\DeskFind\trace.log
 ```
+
+The tests (`tests/tests.cpp`) check the name matching, the Everything reply parser against malformed replies, and the
+whole search pipeline over a folder tree they make, read from disk so that Everything isn't needed. GitHub Actions runs
+the code analysis and the tests on every push and pull request.
 
 There is also a headless test of the search pipeline. DeskFind is a windowed program, so wait for it with `start /wait`:
 
@@ -189,7 +199,9 @@ In this command:
 
 | File | What it does |
 | --- | --- |
-| `src/app.cpp` | The window, keyboard and mouse, painting and the desktop-only hotkey |
+| `src/app.cpp` | The search window's life, the tray, the desktop-only hotkey and setting Everything up |
+| `src/appview.cpp`, `src/appinput.cpp` | What the search window shows and paints; its text box, list, keyboard and mouse |
+| `src/access.cpp`, `src/appaccess.cpp`, `src/settingsaccess.cpp` | UI Automation, for screen readers |
 | `src/search.cpp` | The three groups, ranking, caching and the desktop-folder index |
 | `src/everything.cpp` | Everything IPC on its own thread |
 | `src/canvas.cpp`, `src/text.cpp` | The software renderer and DirectWrite text |
@@ -199,8 +211,10 @@ In this command:
 | `src/settings.cpp`, `src/settingsui.cpp` | The settings, and the window to change them |
 | `src/setup.cpp` | `--install` and `--uninstall` |
 | `src/lang.cpp` | English and Turkish text |
+| `tests/tests.cpp` | The tests |
 
-Releases are built by [GitHub Actions](.github/workflows/build.yml) from a `v*` tag, which must match `src/version.h`.
+Releases are built by [GitHub Actions](.github/workflows/build.yml) from a `v*` tag, which must match `src/version.h`
+(and the version in `res/app.manifest`).
 
 ## Privacy
 

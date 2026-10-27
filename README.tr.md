@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/Bilalatss/DeskFind/releases/latest"><img src="https://img.shields.io/github/v/release/Bilalatss/DeskFind?label=s%C3%BCr%C3%BCm" alt="Son sürüm"></a>
   <img src="https://img.shields.io/badge/Windows-11-0078D4" alt="Windows 11">
-  <img src="https://img.shields.io/badge/boyut-430%20KB-2ea44f" alt="430 KB">
+  <img src="https://img.shields.io/badge/boyut-460%20KB-2ea44f" alt="460 KB">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Bilalatss/DeskFind?label=lisans" alt="MIT lisansı"></a>
 </p>
 
@@ -41,8 +41,10 @@ uygulamanın kendi kısayolu olarak kalır. Her yerde ya da başka tuşlarla aç
   - Windows klasörü, geçici dosyalar ve Windows'un *Son kullanılanlar* kısayolları da görünmez.
   - Derleme çıktıları, uygulama verileri ve loglar senin dosyalarından sonra gelir.
 - **Sana göre ayarlanır.** Windows 11 Ayarlar tarzında bir ayarlar penceresi var. Kısayollar, sonuç grupları, hangi klasörlerin arandığı, görünüm ve daha fazlası oradan değişir. Her değişiklik anında uygulanır.
-- **Küçük.** 430 KB'lık tek bir exe, ayrıca kurulacak bir çalışma ortamı yok. Tepside beklerken 1 MB'tan az bellek kullanır.
+- **Küçük.** 460 KB'lık tek bir exe, ayrıca kurulacak bir çalışma ortamı yok. Tepside beklerken 1 MB'tan az bellek kullanır.
 - **Windows'un parçası gibi görünür.** Akrilik, Mica, yuvarlak köşeler, açık/koyu tema ve vurgu rengi tıpkı Windows'taki gibi.
+- **Erişilebilir.** Ekran Okuyucusu ve diğer ekran okuyucular arama kutusunu, sonuçları ve tüm ayarları okuyup
+  kullanabilir. Windows'un karşıtlık temalarına da uyar.
 - **Türkçe ve İngilizce.** Sen seçmezsen Windows'un görüntüleme dilini izler.
 - **Gizlilik.** İnternete bağlanmaz, veri toplamaz.
 
@@ -57,7 +59,7 @@ irm https://raw.githubusercontent.com/Bilalatss/DeskFind/main/install.ps1 | iex
 
 [Betik](install.ps1) şunları yapar:
 
-- Son sürümdeki `DeskFind.exe`'yi indirir ve SHA-256 özetini sürümdekiyle karşılaştırır.
+- Son sürümdeki `DeskFind.exe`'yi (Arm işlemcili Windows'ta Arm64 sürümünü) indirir ve SHA-256 özetini sürümdekiyle karşılaştırır.
 - Everything kurulu değilse winget ile kurmayı önerir.
 - Dosyayı `%LOCALAPPDATA%\Programs\DeskFind` klasörüne kopyalar.
 - DeskFind'ı Başlat menüsüne ve *Ayarlar › Uygulamalar*'a ekler.
@@ -145,6 +147,7 @@ komutuyla açabilirsin.
   - Eşleşmesi aynı olanlarda sık ve yakın zamanda açtıkların yukarı çıkar.
   - Derleme çıktıları, önbellekler ve uygulama verileri aşağı iner.
 - **Çizim:** DeskFind, ayarlar dahil pencerelerini kendisi çizer. DirectWrite ile hazırlanan yazılar işlemcide bir bitmap'e çizilir ve DWM akrilik penceresinde gösterilir. Arayüz çatısı ya da GPU bağlamı yoktur; bu yüzden gizliyken bellekte tutacak pek bir şeyi yoktur.
+- **Erişilebilirlik:** Ekrandaki hiçbir şey standart bir denetim olmadığı için iki pencere de kendini ekran okuyuculara UI Automation ile tarif eder. Karşıtlık temasında saydamlığı bırakır ve temanın kendi renkleriyle çizer.
 - **Boşta:** Kutu kapandıktan birkaç saniye sonra önbelleklerini bırakır, belleğini küçültür ve Windows'tan verimlilik modunda çalışmayı ister.
 - **Hız:** Kutu açıkken DeskFind, Everything'i Windows 11'in verimlilik modundan çıkarır. Testlerde Everything'in sorguları yaklaşık %30 hızlandı.
 
@@ -160,12 +163,12 @@ Geliştiricinin bilgisayarında ölçüldü (Windows 11 24H2, Everything'de yakl
 | Yazmaya devam ederken (önbellekten süzerek) | ~1 ms |
 | Tepside beklerken bellek | 0,3–0,7 MB |
 | Kutu açıkken bellek | ~5 MB |
-| İndirme boyutu | 430 KB |
+| İndirme boyutu | 460 KB |
 
 ## Gereksinimler
 
-- **Windows 11**, x64.
-  - 24H2'de derlendi ve test edildi.
+- **Windows 11**, x64 ya da Arm64.
+  - 24H2'de (x64) derlendi ve test edildi. Arm64 sürümü aynı CI'da derlenir ama bir Arm bilgisayarda test edilmedi.
   - Windows 10'da test edilmedi; pencere Windows 11'in akrilik arka planına ve yuvarlak köşelerine dayanıyor.
 - **voidtools [Everything](https://www.voidtools.com/downloads/) 1.4**, normal sürüm; bilgisayarın geri kalanı için.
   - IPC'si olmayan *Everything Lite* çalışmaz.
@@ -181,8 +184,15 @@ Visual Studio 2022 veya sonrası (ya da Build Tools) ve *C++ ile masaüstü geli
 ```bat
 build.cmd            :: bin\DeskFind.exe
 build.cmd install    :: derle, sonra bu kullanıcıya kur
+build.cmd test       :: derle, sonra testleri çalıştır (bin\DeskFindTests.exe)
+build.cmd arm64      :: Arm işlemcili Windows için bin\DeskFind-arm64.exe (MSVC ARM64 derleme araçları gerekir)
+build.cmd analyze    :: tüm kaynak dosyalarda MSVC kod analizi; tek bir uyarı bile derlemeyi durdurur
 build.cmd trace      :: bin\DeskFindTrace.exe, süreleri %LOCALAPPDATA%\DeskFind\trace.log dosyasına yazar
 ```
+
+Testler (`tests/tests.cpp`) ad eşleştirmeyi, Everything cevap ayrıştırıcısını bozuk cevaplara karşı ve tüm arama
+hattını kendi kurduğu bir klasör ağacı üzerinde denetler. Ağaç diskten okunur, yani Everything gerekmez. GitHub Actions
+kod analizini ve testleri her push ve pull request'te çalıştırır.
 
 Arama hattının arayüzsüz bir testi de var. DeskFind pencereli bir program olduğu için `start /wait` ile beklenir:
 
@@ -199,7 +209,9 @@ Bu komutta:
 
 | Dosya | Ne yapar |
 | --- | --- |
-| `src/app.cpp` | Pencere, klavye ve fare, çizim ve yalnızca masaüstünde çalışan kısayol |
+| `src/app.cpp` | Arama penceresinin yaşam döngüsü, tepsi, yalnızca masaüstünde çalışan kısayol ve Everything kurulumu |
+| `src/appview.cpp`, `src/appinput.cpp` | Arama penceresinin gösterdikleri ve çizimi; metin kutusu, liste, klavye ve fare |
+| `src/access.cpp`, `src/appaccess.cpp`, `src/settingsaccess.cpp` | Ekran okuyucular için UI Automation |
 | `src/search.cpp` | Üç grup, sıralama, önbellek ve masaüstü klasörleri dizini |
 | `src/everything.cpp` | Kendi iş parçacığında Everything IPC |
 | `src/canvas.cpp`, `src/text.cpp` | Yazılım tabanlı çizim ve DirectWrite yazıları |
@@ -209,9 +221,10 @@ Bu komutta:
 | `src/settings.cpp`, `src/settingsui.cpp` | Ayarlar ve onları değiştiren pencere |
 | `src/setup.cpp` | `--install` ve `--uninstall` |
 | `src/lang.cpp` | Türkçe ve İngilizce metinler |
+| `tests/tests.cpp` | Testler |
 
 Sürümler `v*` etiketinden [GitHub Actions](.github/workflows/build.yml) ile derlenir. Etiket `src/version.h` ile
-aynı olmalıdır.
+(ve `res/app.manifest` içindeki sürümle) aynı olmalıdır.
 
 ## Gizlilik
 
