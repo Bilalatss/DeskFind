@@ -82,7 +82,7 @@ void Tray::Create(HWND owner)
 
 void Tray::Refresh()
 {
-    // The app icon at the tray's size: its small entries are a simpler drawing made for it (tools/make-icon.py).
+    // The app icon at the tray's size: its small entries are a simpler drawing made for it.
     HICON old = icon_;
     icon_ = nullptr;
     int size = GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForSystem());
